@@ -153,7 +153,7 @@ export async function onRequestPost({ request, env }) {
       zip.file(`${String(i + 1).padStart(2, "0")}_${safe}.pdf`, pdfBytes);
     }
 
-    const zipBytes = await zip.generateAsync({ type: "uint8array" });
+    const zipBytes = await zip.generateAsync({ type: "arraybuffer" });
 
     const key = `previews/${crypto.randomUUID()}.zip`;
     await env.CERTS_BUCKET.put(key, zipBytes, {
