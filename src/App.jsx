@@ -24,6 +24,7 @@ export default function App() {
   const [template, setTemplate] = useState("modern");
   const [paper, setPaper] = useState("A4");
   const [busy, setBusy] = useState(false);
+  
 
   async function handleFile(file) {
     setCsvFile(file);
@@ -39,40 +40,42 @@ export default function App() {
     }
   }
 
-  async function generatePreview() {
-    if (!csvFile) return setError("Upload a CSV first.");
-    if (!fileInfo) return setError("Fix CSV errors first.");
+  async function generatePreviewPdf() {
+  if (!csvFile) return setError("Upload a CSV first.");
+  if (!fileInfo) return setError("Fix CSV errors first.");
 
-    setError("");
-    setBusy(true);
-    try {
-      const form = new FormData();
-      form.append("file", csvFile);
-      form.append("template_id", template);
-      form.append("paper_size", paper);
+  setError("");
+  setBusy(true);
+  try {
+    const form = new FormData();
+    form.append("file", csvFile);
+    form.append("template_id", template);
+    form.append("paper_size", paper);
 
-      const res = await fetch("/api/preview", { method: "POST", body: form });
-      if (!res.ok) {
-        const maybe = await res.json().catch(() => ({}));
-        throw new Error(maybe.error || "Preview generation failed.");
-      }
+    const res = await fetch("/api/preview", { method: "POST", body: form });
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "certificate_preview.zip";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      setError(e.message || "Something went wrong.");
-    } finally {
-      setBusy(false);
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt);
     }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "certificate_preview.pdf";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    setError((e && e.message) ? e.message : "Preview generation failed.");
+  } finally {
+    setBusy(false);
   }
+}
+
 
   return (
     <div style={{ padding: 40, fontFamily: "system-ui" }}>
