@@ -1,4 +1,3 @@
-import JSZip from "jszip";
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 
 const MAX_PREVIEW = 5;
@@ -31,104 +30,32 @@ function parseCsv(text) {
 }
 
 function pageSize(paperSize) {
-  // Points (pt). Good enough for MVP.
   // A4: 595 x 842 pt, US Letter: 612 x 792 pt
   return paperSize === "LETTER" ? [612, 792] : [595, 842];
 }
 
-async function makeCertificatePdf({ name, title, date, paperSize, templateId }) {
-  const [w, h] = pageSize(paperSize);
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([w, h]);
-
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  // Background (simple MVP)
-  page.drawRectangle({ x: 0, y: 0, width: w, height: h, color: rgb(1, 1, 1) });
-
-  // Small “template” accent differences
-  if (templateId === "t1") {
-    page.drawRectangle({ x: 0, y: h - 80, width: w, height: 80, color: rgb(0.12, 0.12, 0.12) });
-  } else if (templateId === "t2") {
-    page.drawRectangle({ x: 0, y: h - 80, width: w, height: 80, color: rgb(0.2, 0.45, 1) });
-  } else {
-    page.drawRectangle({ x: 0, y: h - 80, width: w, height: 80, color: rgb(0.65, 0.2, 0.85) });
-  }
-
-  // Title
-  page.drawText("Certificate", {
-    x: 40,
-    y: h - 52,
-    size: 22,
-    font: fontBold,
-    color: rgb(1, 1, 1),
-  });
-
-  // Main text
-  const centerX = w / 2;
-
-  const nameSize = 34;
-  const titleSize = 18;
-
-  const nameWidth = fontBold.widthOfTextAtSize(name, nameSize);
-  page.drawText(name, {
-    x: centerX - nameWidth / 2,
-    y: h * 0.55,
-    size: nameSize,
-    font: fontBold,
-    color: rgb(0.1, 0.1, 0.1),
-  });
-
-  const titleText = title;
-  const titleWidth = font.widthOfTextAtSize(titleText, titleSize);
-  page.drawText(titleText, {
-    x: centerX - titleWidth / 2,
-    y: h * 0.48,
-    size: titleSize,
+function drawCenteredText(page, font, text, size, y, color, bold = false) {
+  const width = font.widthOfTextAtSize(text, size);
+  const { width: w } = page.getSize();
+  page.drawText(text, {
+    x: (w - width) / 2,
+    y,
+    size,
     font,
-    color: rgb(0.25, 0.25, 0.25),
+    color,
   });
-
-  if (date) {
-    const dateText = `Date: ${date}`;
-    const dateWidth = font.widthOfTextAtSize(dateText, 12);
-    page.drawText(dateText, {
-      x: centerX - dateWidth / 2,
-      y: h * 0.22,
-      size: 12,
-      font,
-      color: rgb(0.35, 0.35, 0.35),
-    });
-  }
-
-  // Watermark (preview)
-  const watermark = "PREVIEW — UPGRADE TO REMOVE WATERMARK";
-  page.drawText(watermark, {
-    x: 40,
-    y: h * 0.35,
-    size: 22,
-    font: fontBold,
-    color: rgb(0.75, 0.75, 0.75),
-    rotate: degrees(25),
-    opacity: 0.35,
-  });
-
-  const pdfBytes = await pdfDoc.save();
-  return pdfBytes;
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request }) {
   try {
     const form = await request.formData();
     const file = form.get("file");
-    const templateId = (form.get("template_id") || "t1").toString();
+    const templateId = (form.get("template_id") || "modern").toString();
     const paperSize = (form.get("paper_size") || "A4").toString().toUpperCase();
 
     if (!file || typeof file === "string") {
-      return new Response(JSON.stringify({ error: "Missing CSV1 file." }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Missing CSV file." }), { status: 400 });
     }
-
     if (!["A4", "LETTER"].includes(paperSize)) {
       return new Response(JSON.stringify({ error: "paper_size must be A4 or LETTER." }), { status: 400 });
     }
@@ -141,27 +68,67 @@ export async function onRequestPost({ request, env }) {
 
     const rows = parsed.rows.slice(0, MAX_PREVIEW);
 
-    const zip = new JSZip();
+    const pdfDoc = await PDFDocument.create();
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+    const [w, h] = pageSize(paperSize);
+
     for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      const pdfBytes = await makeCertificatePdf({
-        ...r,
-        paperSize,
-        templateId,
+      const { name, title, date } = rows[i];
+
+      const page = pdfDoc.addPage([w, h]);
+
+      // Background
+      page.drawRectangle({ x: 0, y: 0, width: w, height: h, color: rgb(1, 1, 1) });
+
+      // Template accent bar
+      const barColor =
+        templateId === "modern" ? rgb(0.12, 0.12, 0.12) :
+        templateId === "elegant" ? rgb(0.2, 0.45, 1) :
+        rgb(0.65, 0.2, 0.85);
+
+      page.drawRectangle({ x: 0, y: h - 80, width: w, height: 80, color: barColor });
+      page.drawText("Certificate", { x: 40, y: h - 52, size: 22, font: fontBold, color: rgb(1, 1, 1) });
+
+      // Content
+      drawCenteredText(page, fontBold, name, 34, h * 0.55, rgb(0.1, 0.1, 0.1));
+      drawCenteredText(page, font, title, 18, h * 0.48, rgb(0.25, 0.25, 0.25));
+
+      if (date) {
+        drawCenteredText(page, font, `Date: ${date}`, 12, h * 0.22, rgb(0.35, 0.35, 0.35));
+      }
+
+      // Watermark
+      page.drawText("PREVIEW — UPGRADE TO REMOVE WATERMARK", {
+        x: 40,
+        y: h * 0.35,
+        size: 22,
+        font: fontBold,
+        color: rgb(0.75, 0.75, 0.75),
+        rotate: degrees(25),
+        opacity: 0.35,
       });
-      const safe = r.name.replace(/[^a-z0-9 _-]/gi, "").trim().replace(/\s+/g, "_") || `recipient_${i + 1}`;
-      zip.file(`${String(i + 1).padStart(2, "0")}_${safe}.pdf`, pdfBytes);
+
+      // Optional footer page number
+      page.drawText(`Preview page ${i + 1} of ${rows.length}`, {
+        x: 40,
+        y: 30,
+        size: 10,
+        font,
+        color: rgb(0.5, 0.5, 0.5),
+      });
     }
 
-    const zipBytes = await zip.generateAsync({ type: "arraybuffer" });
+    const pdfBytes = await pdfDoc.save();
 
-    const key = `previews/${crypto.randomUUID()}.zip`;
-    await env.CERTS_BUCKET.put(key, zipBytes, {
-      httpMetadata: { contentType: "application/zip" },
-    });
-
-    return new Response(JSON.stringify({ download_url: `/api/download/${encodeURIComponent(key)}` }), {
-      headers: { "Content-Type": "application/json" },
+    return new Response(pdfBytes, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": 'attachment; filename="certificate_preview.pdf"',
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff"
+      },
     });
   } catch (e) {
     return new Response(JSON.stringify({ error: e?.message || "Server error" }), {
@@ -170,3 +137,4 @@ export async function onRequestPost({ request, env }) {
     });
   }
 }
+
