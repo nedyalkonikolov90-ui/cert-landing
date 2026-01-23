@@ -8,7 +8,7 @@ export async function onRequestGet({ params, env }) {
   return new Response(new Uint8Array(zipBytes), {
   headers: {
     "Content-Type": "application/zip",
-    "Content-Disposition": 'attachment; filename="certificate_preview.zip"',
+    "Content-Disposition": 'attachment; filename="certificate_TEST.zip"',
     "Cache-Control": "no-store",
   },
 });
