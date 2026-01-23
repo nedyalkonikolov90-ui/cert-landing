@@ -40,7 +40,7 @@ export default function App() {
       setFileInfo(null);
     } else {
       setError("");
-      setFileInfo({ total: result.rows.length, sample: result.rows.slice(0, 3) });
+      setFileInfo({ total: result.rows.length, sample: result.rows.slice(0, result.rows.length) });
     }
   }
 
