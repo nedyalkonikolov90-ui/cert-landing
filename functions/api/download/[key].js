@@ -5,11 +5,11 @@ export async function onRequestGet({ params, env }) {
   const obj = await env.CERTS_BUCKET.get(decodeURIComponent(key));
   if (!obj) return new Response("Not found", { status: 404 });
 
-  return new Response(obj.body, {
-    headers: {
-      "Content-Type": "application/zip",
-      "Content-Disposition": 'attachment; filename="certificate_preview.zip"',
-      "Cache-Control": "no-store",
-    },
-  });
+  return new Response(new Uint8Array(zipBytes), {
+  headers: {
+    "Content-Type": "application/zip",
+    "Content-Disposition": 'attachment; filename="certificate_preview.zip"',
+    "Cache-Control": "no-store",
+  },
+});
 }
