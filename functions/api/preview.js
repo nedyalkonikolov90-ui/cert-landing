@@ -126,7 +126,7 @@ export async function onRequestPost({ request, env }) {
     const paperSize = (form.get("paper_size") || "A4").toString().toUpperCase();
 
     if (!file || typeof file === "string") {
-      return new Response(JSON.stringify({ error: "Missing CSV file." }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Missing CSV1 file." }), { status: 400 });
     }
 
     if (!["A4", "LETTER"].includes(paperSize)) {
