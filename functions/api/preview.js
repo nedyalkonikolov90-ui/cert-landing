@@ -3,13 +3,7 @@ import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 const MAX_PREVIEW = 5;
 
 // Template registry (add more later)
-const TEMPLATES = {
-  "kids-fantasy-1": {
-    A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png",
-    LETTER:
-      "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png",
-  },
-};
+const TEMPLATES = { "kids-fantasy-1": { A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png", LETTER: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png", }, "Professional": { A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2014_17_04.png", LETTER: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2014_17_04.png", }, };
 
 function parseCsv(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
