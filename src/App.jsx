@@ -1,6 +1,7 @@
+// src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
-// Keep these aligned with backend pdf-lib StandardFonts mapping
+// Keep these aligned with backend mapping (helvetica/times/courier)
 const FONT_OPTIONS = [
   { id: "helvetica", label: "Helvetica" },
   { id: "times", label: "Times" },
@@ -11,7 +12,7 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-// Make preview fonts match PDF standard fonts as closely as possible
+// Make live preview match PDF “standard fonts” as closely as possible
 function fontFamilyFor(fontId) {
   switch ((fontId || "").toLowerCase()) {
     case "times":
@@ -20,7 +21,6 @@ function fontFamilyFor(fontId) {
       return '"Courier New", Courier, monospace';
     case "helvetica":
     default:
-      // Helvetica isn't guaranteed on Windows; Arial is the closest common fallback
       return "Arial, Helvetica, sans-serif";
   }
 }
@@ -54,7 +54,7 @@ function parseCsv(text) {
   return { rows };
 }
 
-// TXT format (simple MVP):
+// TXT format:
 // Each line: Name - Title
 function parseTxt(text) {
   const lines = text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
@@ -71,9 +71,8 @@ function parseTxt(text) {
   return { rows };
 }
 
-// Generic draggable overlay element.
-// Stores positions in percent of preview box (0..1)
-function DraggableText({ fieldKey, text, pos, onPosChange, style, previewBoxRef }) {
+// Editable + draggable overlay element.
+function DraggableText({ fieldKey, text, pos, onPosChange, onTextChange, style, previewBoxRef }) {
   const [dragging, setDragging] = useState(false);
 
   function pointerToPercent(clientX, clientY) {
@@ -86,6 +85,8 @@ function DraggableText({ fieldKey, text, pos, onPosChange, style, previewBoxRef 
   }
 
   function onDown(e) {
+    // If user is selecting/typing in editable content, don't start drag.
+    if (e.target?.isContentEditable) return;
     e.preventDefault();
     setDragging(true);
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -107,6 +108,9 @@ function DraggableText({ fieldKey, text, pos, onPosChange, style, previewBoxRef 
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerLeave={onUp}
+      contentEditable
+      suppressContentEditableWarning
+      onBlur={(e) => onTextChange(fieldKey, e.currentTarget.innerText)}
       style={{
         position: "absolute",
         left: `${pos.x * 100}%`,
@@ -115,14 +119,15 @@ function DraggableText({ fieldKey, text, pos, onPosChange, style, previewBoxRef 
         cursor: dragging ? "grabbing" : "grab",
         padding: "6px 10px",
         borderRadius: 10,
-        background: dragging ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.25)",
+        background: dragging ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.22)",
         border: "1px dashed rgba(0,0,0,0.28)",
         touchAction: "none",
-        userSelect: "none",
+        userSelect: "text",
         whiteSpace: "nowrap",
+        outline: "none",
         ...style,
       }}
-      title="Drag to reposition"
+      title="Edit text, or drag to reposition"
     >
       {text || " "}
     </div>
@@ -147,27 +152,33 @@ export default function App() {
 
   // Common generator settings
   const [templateId, setTemplateId] = useState("");
-  const [paper, setPaper] = useState("A4"); // A4 | LETTER
+  const [paper, setPaper] = useState("A4");
   const [busy, setBusy] = useState(false);
 
-  // Fields content
+  // Editable fields on template
   const [certTitle, setCertTitle] = useState("Certificate of Achievement");
+  const [subtitle, setSubtitle] = useState("Presented to"); // NEW (below title)
   const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
   const [issuer, setIssuer] = useState("Issuer / Organization");
+  const [description, setDescription] = useState("For outstanding effort and dedication"); // NEW (below name)
 
-  // Positions for ALL fields (percent of preview box)
+  // Positions (% of preview box)
   const [pos, setPos] = useState({
     certTitle: { x: 0.5, y: 0.18 },
+    subtitle: { x: 0.5, y: 0.26 }, // NEW
     name: { x: 0.5, y: 0.42 },
-    award: { x: 0.5, y: 0.5 },
-    date: { x: 0.1, y: 0.92 },
-    issuer: { x: 0.8, y: 0.88 },
+    description: { x: 0.5, y: 0.48 }, // NEW
+    award: { x: 0.5, y: 0.54 },
+    date: { x: 0.10, y: 0.92 },
+    issuer: { x: 0.80, y: 0.88 },
   });
 
   // Style per field: font + color
   const [styleByField, setStyleByField] = useState({
     certTitle: { font: "helvetica", color: "#2a2a2a" },
+    subtitle: { font: "helvetica", color: "#3a3a3a" }, // NEW
     name: { font: "helvetica", color: "#2a2a2a" },
+    description: { font: "helvetica", color: "#3a3a3a" }, // NEW
     award: { font: "helvetica", color: "#3a3a3a" },
     date: { font: "helvetica", color: "#3a3a3a" },
     issuer: { font: "helvetica", color: "#2a2a2a" },
@@ -186,13 +197,8 @@ export default function App() {
         const data = await res.json();
         const list = Array.isArray(data?.templates) ? data.templates : [];
         setTemplates(list);
-
-        // auto-select first template
-        if (list.length) {
-          setTemplateId((prev) => prev || list[0].id);
-        } else {
-          setTemplateId("");
-        }
+        if (list.length) setTemplateId((prev) => prev || list[0].id);
+        else setTemplateId("");
       } catch (e) {
         setError(e?.message ? String(e.message) : "Failed to load templates.");
       } finally {
@@ -206,10 +212,7 @@ export default function App() {
     [templates, templateId]
   );
 
-  // key stored in R2
   const templateKey = selectedTemplate?.key || "";
-
-  // Preview image always uses the uploaded A4 image
   const previewImageUrl = templateKey ? `/api/template?key=${encodeURIComponent(templateKey)}` : "";
 
   const sampleRow = useMemo(() => {
@@ -225,6 +228,18 @@ export default function App() {
 
   function updateStyle(fieldKey, patch) {
     setStyleByField((s) => ({ ...s, [fieldKey]: { ...s[fieldKey], ...patch } }));
+  }
+
+  function updateText(fieldKey, value) {
+    const v = (value ?? "").toString().replace(/\r/g, "");
+
+    if (fieldKey === "certTitle") setCertTitle(v);
+    if (fieldKey === "subtitle") setSubtitle(v);
+    if (fieldKey === "name") setManualName(v);
+    if (fieldKey === "description") setDescription(v);
+    if (fieldKey === "award") setManualAward(v);
+    if (fieldKey === "date") setDateText(v.replace(/^Date:\s*/i, "").trim());
+    if (fieldKey === "issuer") setIssuer(v);
   }
 
   async function handleUpload(file) {
@@ -248,7 +263,6 @@ export default function App() {
 
   async function generatePreviewPdf() {
     setError("");
-
     if (!templateKey) return setError("No template selected. Upload templates to R2 first.");
 
     const effectiveRows =
@@ -262,24 +276,19 @@ export default function App() {
     try {
       const form = new FormData();
 
-      // For backend: send rows in JSON
       form.append("rows_json", JSON.stringify(effectiveRows));
-
-      // NEW: send R2 template key
       form.append("template_key", templateKey);
-
-      // Keep LETTER option
       form.append("paper_size", paper);
 
-      // Field values
+      // main fields
       form.append("certificate_title", certTitle);
+      form.append("subtitle", subtitle);
+      form.append("description", description);
+
       form.append("date_text", dateText);
       form.append("issuer", issuer);
 
-      // Positions (%)
       form.append("pos_json", JSON.stringify(pos));
-
-      // Styles (font + color)
       form.append("style_json", JSON.stringify(styleByField));
 
       const res = await fetch("/api/preview", { method: "POST", body: form });
@@ -302,6 +311,29 @@ export default function App() {
     }
   }
 
+  const fieldList = ["certTitle", "subtitle", "name", "description", "award", "date", "issuer"];
+
+  function prettyFieldName(k) {
+    switch (k) {
+      case "certTitle":
+        return "Certificate Title";
+      case "subtitle":
+        return "Subtitle (under title)";
+      case "name":
+        return "Name";
+      case "description":
+        return "Description (under name)";
+      case "award":
+        return "Title / Award";
+      case "date":
+        return "Date";
+      case "issuer":
+        return "Issuer";
+      default:
+        return k;
+    }
+  }
+
   return (
     <div style={{ padding: 40, fontFamily: "system-ui" }}>
       <h1>Certificate Generator</h1>
@@ -312,10 +344,7 @@ export default function App() {
           <h2 style={{ marginTop: 0 }}>Inputs</h2>
 
           <div style={{ marginBottom: 12 }}>
-            <label>
-              <b>Input mode</b>
-            </label>
-            <br />
+            <label><b>Input mode</b></label><br />
             <select value={inputMode} onChange={(e) => setInputMode(e.target.value)} style={{ width: "100%" }}>
               <option value="manual">Manual (single certificate)</option>
               <option value="upload">Upload CSV/TXT (batch)</option>
@@ -325,10 +354,7 @@ export default function App() {
           {inputMode === "manual" ? (
             <>
               <div style={{ marginBottom: 12 }}>
-                <label>
-                  <b>Name</b>
-                </label>
-                <br />
+                <label><b>Name</b></label><br />
                 <input
                   value={manualName}
                   onChange={(e) => setManualName(e.target.value)}
@@ -336,10 +362,7 @@ export default function App() {
                 />
               </div>
               <div style={{ marginBottom: 12 }}>
-                <label>
-                  <b>Title / Award</b>
-                </label>
-                <br />
+                <label><b>Title / Award</b></label><br />
                 <input
                   value={manualAward}
                   onChange={(e) => setManualAward(e.target.value)}
@@ -350,18 +373,14 @@ export default function App() {
           ) : (
             <>
               <div style={{ marginBottom: 12 }}>
-                <label>
-                  <b>Upload .csv or .txt</b>
-                </label>
-                <br />
+                <label><b>Upload .csv or .txt</b></label><br />
                 <input
                   type="file"
                   accept=".csv,.txt,text/csv,text/plain"
                   onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
                 />
                 <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-                  CSV headers: <code>name,title</code> (optional: <code>date</code>, <code>issuer</code>)
-                  <br />
+                  CSV headers: <code>name,title</code> (optional: <code>date</code>, <code>issuer</code>)<br />
                   TXT lines: <code>Name - Title</code>
                 </div>
                 {uploadFile && rows.length > 0 && (
@@ -375,10 +394,7 @@ export default function App() {
 
           <h2 style={{ marginTop: 16 }}>Template</h2>
           <div style={{ marginBottom: 12 }}>
-            <label>
-              <b>Template</b>
-            </label>
-            <br />
+            <label><b>Template</b></label><br />
             <select
               value={templateId}
               onChange={(e) => setTemplateId(e.target.value)}
@@ -391,91 +407,37 @@ export default function App() {
                 <option>No templates found</option>
               ) : (
                 templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                  </option>
+                  <option key={t.id} value={t.id}>{t.label}</option>
                 ))
               )}
             </select>
-
             <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-              Templates are loaded from R2: <code>templates/templates/</code>
+              Templates are loaded from R2 folder: <code>templates/</code>
             </div>
           </div>
 
           <div style={{ marginBottom: 12 }}>
-            <label>
-              <b>Paper size</b>
-            </label>
-            <br />
+            <label><b>Paper size</b></label><br />
             <select value={paper} onChange={(e) => setPaper(e.target.value)} style={{ width: "100%" }}>
               <option value="A4">A4 (landscape)</option>
               <option value="LETTER">US Letter (landscape)</option>
             </select>
             <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-              Note: template image is A4; PDF generator will crop to fit Letter when selected.
+              Note: your template image is A4; Letter will crop slightly in the generated PDF.
             </div>
           </div>
 
-          <h2 style={{ marginTop: 16 }}>Field values</h2>
-          <div style={{ marginBottom: 12 }}>
-            <label>
-              <b>Certificate title</b>
-            </label>
-            <br />
-            <input
-              value={certTitle}
-              onChange={(e) => setCertTitle(e.target.value)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 12 }}>
-            <label>
-              <b>Date</b>
-            </label>
-            <br />
-            <input
-              value={dateText}
-              onChange={(e) => setDateText(e.target.value)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
-            />
-          </div>
-
-          <div style={{ marginBottom: 12 }}>
-            <label>
-              <b>Issuer</b>
-            </label>
-            <br />
-            <input
-              value={issuer}
-              onChange={(e) => setIssuer(e.target.value)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
-            />
-          </div>
-
           <h2 style={{ marginTop: 16 }}>Font & color</h2>
-
-          {["certTitle", "name", "award", "date", "issuer"].map((k) => (
+          {fieldList.map((k) => (
             <div key={k} style={{ marginBottom: 10, padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                {k === "certTitle"
-                  ? "Certificate Title"
-                  : k === "name"
-                  ? "Name"
-                  : k === "award"
-                  ? "Title / Award"
-                  : k === "date"
-                  ? "Date"
-                  : "Issuer"}
-              </div>
-
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>{prettyFieldName(k)}</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10 }}>
-                <select value={styleByField[k].font} onChange={(e) => updateStyle(k, { font: e.target.value })}>
+                <select
+                  value={styleByField[k].font}
+                  onChange={(e) => updateStyle(k, { font: e.target.value })}
+                >
                   {FONT_OPTIONS.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.label}
-                    </option>
+                    <option key={f.id} value={f.id}>{f.label}</option>
                   ))}
                 </select>
 
@@ -508,13 +470,20 @@ export default function App() {
           >
             {busy ? "Generating…" : "Generate Preview PDF"}
           </button>
+
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
+            Tip: Edit text directly on the template (click → type), then click outside to save.
+          </div>
         </div>
 
         {/* PREVIEW */}
         <div style={{ padding: 20, border: "1px solid #ddd", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Live preview (drag any field)</h2>
+          <h2 style={{ marginTop: 0 }}>Live preview (edit + drag)</h2>
 
-          <div ref={previewBoxRef} style={{ position: "relative", width: "100%", maxWidth: 1200, userSelect: "none" }}>
+          <div
+            ref={previewBoxRef}
+            style={{ position: "relative", width: "100%", maxWidth: 1200, userSelect: "none" }}
+          >
             {previewImageUrl ? (
               <img
                 src={previewImageUrl}
@@ -543,18 +512,33 @@ export default function App() {
               </div>
             )}
 
-            {/* Apply fontFamily based on selected font so preview matches PDF */}
             <DraggableText
               fieldKey="certTitle"
               text={certTitle}
               pos={pos.certTitle}
               onPosChange={updatePos}
+              onTextChange={updateText}
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.certTitle.font),
-                fontWeight: 700,
+                fontWeight: 800,
                 fontSize: "clamp(18px, 3.2vw, 42px)",
                 color: styleByField.certTitle.color,
+              }}
+            />
+
+            <DraggableText
+              fieldKey="subtitle"
+              text={subtitle}
+              pos={pos.subtitle}
+              onPosChange={updatePos}
+              onTextChange={updateText}
+              previewBoxRef={previewBoxRef}
+              style={{
+                fontFamily: fontFamilyFor(styleByField.subtitle.font),
+                fontWeight: 500,
+                fontSize: "clamp(12px, 1.8vw, 20px)",
+                color: styleByField.subtitle.color,
               }}
             />
 
@@ -563,12 +547,28 @@ export default function App() {
               text={sampleRow.name}
               pos={pos.name}
               onPosChange={updatePos}
+              onTextChange={updateText}
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.name.font),
-                fontWeight: 700,
+                fontWeight: 800,
                 fontSize: "clamp(14px, 2.6vw, 30px)",
                 color: styleByField.name.color,
+              }}
+            />
+
+            <DraggableText
+              fieldKey="description"
+              text={description}
+              pos={pos.description}
+              onPosChange={updatePos}
+              onTextChange={updateText}
+              previewBoxRef={previewBoxRef}
+              style={{
+                fontFamily: fontFamilyFor(styleByField.description.font),
+                fontWeight: 400,
+                fontSize: "clamp(12px, 1.6vw, 18px)",
+                color: styleByField.description.color,
               }}
             />
 
@@ -577,10 +577,11 @@ export default function App() {
               text={sampleRow.award}
               pos={pos.award}
               onPosChange={updatePos}
+              onTextChange={updateText}
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.award.font),
-                fontWeight: 400,
+                fontWeight: 600,
                 fontSize: "clamp(12px, 1.6vw, 18px)",
                 color: styleByField.award.color,
               }}
@@ -591,10 +592,11 @@ export default function App() {
               text={dateText ? `Date: ${dateText}` : "Date: ____-__-__"}
               pos={pos.date}
               onPosChange={updatePos}
+              onTextChange={updateText}
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.date.font),
-                fontWeight: 400,
+                fontWeight: 600,
                 fontSize: "clamp(10px, 1.2vw, 14px)",
                 color: styleByField.date.color,
               }}
@@ -605,6 +607,7 @@ export default function App() {
               text={issuer || "Issuer / Organization"}
               pos={pos.issuer}
               onPosChange={updatePos}
+              onTextChange={updateText}
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.issuer.font),
