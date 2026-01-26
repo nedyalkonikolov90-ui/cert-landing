@@ -1,4 +1,4 @@
-// functions/api/preview.js
+/// functions/api/preview.js
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 
 const MAX_PREVIEW = 5;
@@ -41,7 +41,6 @@ function clamp01(n) {
   return Math.max(0, Math.min(1, n));
 }
 
-// UI pos: y=0 top; PDF y=0 bottom
 function posToPdf(posObj, w, h) {
   const x = clamp01(Number(posObj?.x ?? 0.5)) * w;
   const yTop = clamp01(Number(posObj?.y ?? 0.5));
@@ -73,11 +72,11 @@ function safeJsonParse(str, fallback) {
   }
 }
 
-// Fonts (StandardFonts)
 function resolveFontKey(style, fieldKey, isBold) {
   const fontId = (style?.[fieldKey]?.font || "helvetica").toString().toLowerCase();
   return `${fontId}:${isBold ? "bold" : "regular"}`;
 }
+
 function fontNameForKey(key) {
   const [fontId, weight] = key.split(":");
   const bold = weight === "bold";
@@ -86,7 +85,7 @@ function fontNameForKey(key) {
   return bold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica;
 }
 
-// Draw background as “cover” so A4 image fits Letter without stretching
+// Background “cover” crop (MUST match preview object-fit: cover)
 function drawBackgroundCover(page, img, pageW, pageH) {
   const imgW = img.width;
   const imgH = img.height;
@@ -101,11 +100,15 @@ function drawBackgroundCover(page, img, pageW, pageH) {
   page.drawImage(img, { x, y, width: drawW, height: drawH });
 }
 
+function sizeFor(style, fieldKey, fallback) {
+  const n = Number(style?.[fieldKey]?.size);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export async function onRequestPost({ request, env }) {
   try {
     const form = await request.formData();
 
-    // Must be provided by frontend (R2 key)
     const templateKey = (form.get("template_key") || "").toString();
     if (!templateKey) {
       return new Response(JSON.stringify({ error: "Missing template_key" }), {
@@ -132,7 +135,7 @@ export async function onRequestPost({ request, env }) {
     }
     const templateBytes = new Uint8Array(await obj.arrayBuffer());
 
-    // Rows (json or old csv file)
+    // Rows (json or old csv)
     const rowsJsonStr = (form.get("rows_json") || "").toString();
     const file = form.get("file");
     let rows = [];
@@ -164,7 +167,6 @@ export async function onRequestPost({ request, env }) {
       rows = parsed.rows;
     }
 
-    // Normalize + limit preview
     rows = rows
       .map((r) => ({
         name: (r?.name || "").toString(),
@@ -182,15 +184,14 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    // Field values
+    // Fields
     const certificateTitle = (form.get("certificate_title") || "Certificate of Achievement").toString();
     const subtitle = (form.get("subtitle") || "").toString();
     const description = (form.get("description") || "").toString();
-
     const dateTextDefault = (form.get("date_text") || "").toString();
     const issuerDefault = (form.get("issuer") || "").toString();
 
-    // Positions/styles
+    // Pos/style
     const pos = safeJsonParse((form.get("pos_json") || "{}").toString(), {});
     const style = safeJsonParse((form.get("style_json") || "{}").toString(), {});
 
@@ -214,7 +215,7 @@ export async function onRequestPost({ request, env }) {
 
     const [w, h] = pageSize(paperSize);
 
-    // Font cache (embed once per doc)
+    // Font cache
     const fontCache = new Map();
     async function getFont(fieldKey, isBold) {
       const key = resolveFontKey(style, fieldKey, isBold);
@@ -230,10 +231,15 @@ export async function onRequestPost({ request, env }) {
       return hexToRgb01(hex);
     }
 
+    // Width rules must match App.jsx ratios
+    const MAX_MAIN = w * 0.82;
+    const MAX_SMALL = w * 0.5;
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const page = pdfDoc.addPage([w, h]);
 
+      // IMPORTANT: matches preview object-fit cover
       drawBackgroundCover(page, bgImg, w, h);
 
       // --- CERT TITLE ---
@@ -244,14 +250,14 @@ export async function onRequestPost({ request, env }) {
         const font = await getFont("certTitle", true);
         const color = colorFor("certTitle", "#2a2a2a");
 
-        const maxWidth = w * 0.82;
-        const size = fitTextSize(font, text, maxWidth, 38, 18);
+        const start = sizeFor(style, "certTitle", 38);
+        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(10, start * 0.4));
         const tw = font.widthOfTextAtSize(text, size);
 
         page.drawText(text, { x: x - tw / 2, y, size, font, color });
       }
 
-      // --- SUBTITLE (NEW) ---
+      // --- SUBTITLE ---
       if (subtitle) {
         const text = subtitle;
         const { x, y } = posToPdf(pos?.subtitle, w, h);
@@ -259,8 +265,8 @@ export async function onRequestPost({ request, env }) {
         const font = await getFont("subtitle", false);
         const color = colorFor("subtitle", "#3a3a3a");
 
-        const maxWidth = w * 0.82;
-        const size = fitTextSize(font, text, maxWidth, 18, 10);
+        const start = sizeFor(style, "subtitle", 18);
+        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(10, start * 0.5));
         const tw = font.widthOfTextAtSize(text, size);
 
         page.drawText(text, { x: x - tw / 2, y, size, font, color });
@@ -274,14 +280,14 @@ export async function onRequestPost({ request, env }) {
         const font = await getFont("name", true);
         const color = colorFor("name", "#2a2a2a");
 
-        const maxWidth = w * 0.82;
-        const size = fitTextSize(font, text, maxWidth, 34, 18);
+        const start = sizeFor(style, "name", 34);
+        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(12, start * 0.5));
         const tw = font.widthOfTextAtSize(text, size);
 
         page.drawText(text, { x: x - tw / 2, y, size, font, color });
       }
 
-      // --- DESCRIPTION (NEW) ---
+      // --- DESCRIPTION ---
       if (description) {
         const text = description;
         const { x, y } = posToPdf(pos?.description, w, h);
@@ -289,8 +295,8 @@ export async function onRequestPost({ request, env }) {
         const font = await getFont("description", false);
         const color = colorFor("description", "#3a3a3a");
 
-        const maxWidth = w * 0.82;
-        const size = fitTextSize(font, text, maxWidth, 16, 10);
+        const start = sizeFor(style, "description", 16);
+        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(10, start * 0.6));
         const tw = font.widthOfTextAtSize(text, size);
 
         page.drawText(text, { x: x - tw / 2, y, size, font, color });
@@ -304,8 +310,8 @@ export async function onRequestPost({ request, env }) {
         const font = await getFont("award", false);
         const color = colorFor("award", "#3a3a3a");
 
-        const maxWidth = w * 0.82;
-        const size = fitTextSize(font, text, maxWidth, 18, 11);
+        const start = sizeFor(style, "award", 18);
+        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(10, start * 0.6));
         const tw = font.widthOfTextAtSize(text, size);
 
         page.drawText(text, { x: x - tw / 2, y, size, font, color });
@@ -321,7 +327,8 @@ export async function onRequestPost({ request, env }) {
           const font = await getFont("date", false);
           const color = colorFor("date", "#3a3a3a");
 
-          const size = 12;
+          const start = sizeFor(style, "date", 12);
+          const size = fitTextSize(font, text, MAX_SMALL, start, 9);
           const tw = font.widthOfTextAtSize(text, size);
 
           page.drawText(text, { x: x - tw / 2, y, size, font, color });
@@ -338,14 +345,15 @@ export async function onRequestPost({ request, env }) {
           const font = await getFont("issuer", true);
           const color = colorFor("issuer", "#2a2a2a");
 
-          const size = 14;
+          const start = sizeFor(style, "issuer", 14);
+          const size = fitTextSize(font, text, MAX_SMALL, start, 10);
           const tw = font.widthOfTextAtSize(text, size);
 
           page.drawText(text, { x: x - tw / 2, y, size, font, color });
         }
       }
 
-      // Watermark (preview)
+      // Watermark
       page.drawText("PREVIEW — UPGRADE TO REMOVE WATERMARK", {
         x: 40,
         y: h * 0.35,
@@ -374,3 +382,4 @@ export async function onRequestPost({ request, env }) {
     });
   }
 }
+
