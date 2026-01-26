@@ -3,7 +3,32 @@ import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 const MAX_PREVIEW = 5;
 
 // Template registry (add more later)
-const TEMPLATES = { "kids-fantasy-1": { A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png", LETTER: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png", }, "professional": { A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2014_17_04.png", LETTER: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2014_17_04.png", }, };
+const TEMPLATES = {
+  "kids-fantasy-1": {
+    A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png",
+    LETTER:
+      "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png",
+  },
+  professional: {
+    A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2014_17_04.png",
+    LETTER:
+      "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2014_17_04.png",
+  },
+};
+
+// --------- PERF: in-memory cache across requests (best-effort) ----------
+const TEMPLATE_BYTES_CACHE = new Map(); // url -> Uint8Array
+
+async function fetchTemplateBytesCached(url) {
+  if (TEMPLATE_BYTES_CACHE.has(url)) return TEMPLATE_BYTES_CACHE.get(url);
+
+  const res = await fetch(url, { cf: { cacheTtl: 86400, cacheEverything: true } });
+  if (!res.ok) throw new Error(`Failed to fetch template image: ${res.status} ${res.statusText}`);
+
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  TEMPLATE_BYTES_CACHE.set(url, bytes);
+  return bytes;
+}
 
 function parseCsv(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
@@ -54,12 +79,6 @@ function posToPdf(posObj, w, h) {
   return { x, y };
 }
 
-function getPdfFontName(fontId) {
-  if (fontId === "times") return StandardFonts.TimesRoman;
-  if (fontId === "courier") return StandardFonts.Courier;
-  return StandardFonts.Helvetica;
-}
-
 function hexToRgb01(hex) {
   const raw = (hex || "#000000").toString().trim();
   const h = raw.startsWith("#") ? raw.slice(1) : raw;
@@ -79,18 +98,26 @@ function fitTextSize(font, text, maxWidth, startSize, minSize) {
   return size;
 }
 
-async function fetchTemplateBytes(url) {
-  const res = await fetch(url, { cf: { cacheTtl: 86400, cacheEverything: true } });
-  if (!res.ok) throw new Error(`Failed to fetch template image: ${res.status} ${res.statusText}`);
-  return new Uint8Array(await res.arrayBuffer());
-}
-
 function safeJsonParse(str, fallback) {
   try {
     return JSON.parse(str);
   } catch {
     return fallback;
   }
+}
+
+// --------- PERF: font caching (embed once, reuse) ----------
+function resolveFontKey(style, fieldKey, isBold) {
+  const fontId = (style?.[fieldKey]?.font || "helvetica").toString().toLowerCase();
+  return `${fontId}:${isBold ? "bold" : "regular"}`;
+}
+
+function fontNameForKey(key) {
+  const [fontId, weight] = key.split(":");
+  const bold = weight === "bold";
+  if (fontId === "times") return bold ? StandardFonts.TimesRomanBold : StandardFonts.TimesRoman;
+  if (fontId === "courier") return bold ? StandardFonts.CourierBold : StandardFonts.Courier;
+  return bold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica;
 }
 
 export async function onRequestPost({ request }) {
@@ -141,7 +168,6 @@ export async function onRequestPost({ request }) {
       }
       rows = parsedRows;
     } else {
-      // fallback: must have file
       if (!file || typeof file === "string") {
         return new Response(JSON.stringify({ error: "Missing rows_json or CSV file." }), {
           status: 400,
@@ -178,7 +204,9 @@ export async function onRequestPost({ request }) {
     }
 
     const templateUrl = template[paperSize] || template.A4;
-    const templateBytes = await fetchTemplateBytes(templateUrl);
+
+    // PERF: cached template bytes
+    const templateBytes = await fetchTemplateBytesCached(templateUrl);
 
     const pdfDoc = await PDFDocument.create();
 
@@ -187,14 +215,16 @@ export async function onRequestPost({ request }) {
 
     const [w, h] = pageSize(paperSize);
 
-    // Field font+color helpers (per-field)
-    async function embedFontFor(fieldKey, isBold) {
-      const fontId = (style?.[fieldKey]?.font || "helvetica").toString();
-      // Bold variants for built-in fonts:
-      if (fontId === "times") return pdfDoc.embedFont(isBold ? StandardFonts.TimesRomanBold : StandardFonts.TimesRoman);
-      if (fontId === "courier") return pdfDoc.embedFont(isBold ? StandardFonts.CourierBold : StandardFonts.Courier);
-      return pdfDoc.embedFont(isBold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica);
+    // PERF: embed fonts once and reuse
+    const fontCache = new Map(); // key -> PDFFont
+    async function getFont(fieldKey, isBold) {
+      const key = resolveFontKey(style, fieldKey, isBold);
+      if (fontCache.has(key)) return fontCache.get(key);
+      const font = await pdfDoc.embedFont(fontNameForKey(key));
+      fontCache.set(key, font);
+      return font;
     }
+    const wmFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
     function colorFor(fieldKey, fallbackHex) {
       const hex = (style?.[fieldKey]?.color || fallbackHex || "#000000").toString();
@@ -212,20 +242,14 @@ export async function onRequestPost({ request }) {
         const text = certificateTitle;
         const { x, y } = posToPdf(pos?.certTitle, w, h);
 
-        const font = await embedFontFor("certTitle", true);
+        const font = await getFont("certTitle", true);
         const color = colorFor("certTitle", "#2a2a2a");
 
         const maxWidth = w * 0.82;
         const size = fitTextSize(font, text, maxWidth, 38, 18);
         const tw = font.widthOfTextAtSize(text, size);
 
-        page.drawText(text, {
-          x: x - tw / 2,
-          y,
-          size,
-          font,
-          color,
-        });
+        page.drawText(text, { x: x - tw / 2, y, size, font, color });
       }
 
       // --- NAME ---
@@ -233,20 +257,14 @@ export async function onRequestPost({ request }) {
         const text = row.name;
         const { x, y } = posToPdf(pos?.name, w, h);
 
-        const font = await embedFontFor("name", true);
+        const font = await getFont("name", true);
         const color = colorFor("name", "#2a2a2a");
 
         const maxWidth = w * 0.82;
         const size = fitTextSize(font, text, maxWidth, 34, 18);
         const tw = font.widthOfTextAtSize(text, size);
 
-        page.drawText(text, {
-          x: x - tw / 2,
-          y,
-          size,
-          font,
-          color,
-        });
+        page.drawText(text, { x: x - tw / 2, y, size, font, color });
       }
 
       // --- AWARD / TITLE ---
@@ -254,20 +272,14 @@ export async function onRequestPost({ request }) {
         const text = row.award;
         const { x, y } = posToPdf(pos?.award, w, h);
 
-        const font = await embedFontFor("award", false);
+        const font = await getFont("award", false);
         const color = colorFor("award", "#3a3a3a");
 
         const maxWidth = w * 0.82;
         const size = fitTextSize(font, text, maxWidth, 18, 11);
         const tw = font.widthOfTextAtSize(text, size);
 
-        page.drawText(text, {
-          x: x - tw / 2,
-          y,
-          size,
-          font,
-          color,
-        });
+        page.drawText(text, { x: x - tw / 2, y, size, font, color });
       }
 
       // --- DATE ---
@@ -277,20 +289,13 @@ export async function onRequestPost({ request }) {
           const text = `Date: ${effectiveDate}`;
           const { x, y } = posToPdf(pos?.date, w, h);
 
-          const font = await embedFontFor("date", false);
+          const font = await getFont("date", false);
           const color = colorFor("date", "#3a3a3a");
 
           const size = 12;
           const tw = font.widthOfTextAtSize(text, size);
 
-          // Center at drag point (same behavior as UI)
-          page.drawText(text, {
-            x: x - tw / 2,
-            y,
-            size,
-            font,
-            color,
-          });
+          page.drawText(text, { x: x - tw / 2, y, size, font, color });
         }
       }
 
@@ -301,25 +306,18 @@ export async function onRequestPost({ request }) {
           const text = effectiveIssuer;
           const { x, y } = posToPdf(pos?.issuer, w, h);
 
-          const font = await embedFontFor("issuer", true);
+          const font = await getFont("issuer", true);
           const color = colorFor("issuer", "#2a2a2a");
 
           const size = 14;
           const tw = font.widthOfTextAtSize(text, size);
 
-          page.drawText(text, {
-            x: x - tw / 2,
-            y,
-            size,
-            font,
-            color,
-          });
+          page.drawText(text, { x: x - tw / 2, y, size, font, color });
         }
       }
 
       // Watermark (preview)
       {
-        const wmFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
         page.drawText("PREVIEW — UPGRADE TO REMOVE WATERMARK", {
           x: 40,
           y: h * 0.35,
