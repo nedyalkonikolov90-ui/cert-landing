@@ -1,8 +1,7 @@
+// functions/api/preview.js
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 
 const MAX_PREVIEW = 5;
-
-/* ---------------- Utilities ---------------- */
 
 function parseCsv(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
@@ -34,8 +33,6 @@ function parseCsv(text) {
 }
 
 function pageSize(paperSize) {
-  // A4 landscape: 842 x 595
-  // Letter landscape: 792 x 612
   return paperSize === "LETTER" ? [792, 612] : [842, 595];
 }
 
@@ -44,6 +41,7 @@ function clamp01(n) {
   return Math.max(0, Math.min(1, n));
 }
 
+// UI pos: y=0 top; PDF y=0 bottom
 function posToPdf(posObj, w, h) {
   const x = clamp01(Number(posObj?.x ?? 0.5)) * w;
   const yTop = clamp01(Number(posObj?.y ?? 0.5));
@@ -75,11 +73,11 @@ function safeJsonParse(str, fallback) {
   }
 }
 
+// Fonts (StandardFonts)
 function resolveFontKey(style, fieldKey, isBold) {
-  const fontId = (style?.[fieldKey]?.font || "helvetica").toLowerCase();
+  const fontId = (style?.[fieldKey]?.font || "helvetica").toString().toLowerCase();
   return `${fontId}:${isBold ? "bold" : "regular"}`;
 }
-
 function fontNameForKey(key) {
   const [fontId, weight] = key.split(":");
   const bold = weight === "bold";
@@ -88,7 +86,7 @@ function fontNameForKey(key) {
   return bold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica;
 }
 
-/* -------- Scale background with cover behavior (A4 → LETTER safe) -------- */
+// Draw background as “cover” so A4 image fits Letter without stretching
 function drawBackgroundCover(page, img, pageW, pageH) {
   const imgW = img.width;
   const imgH = img.height;
@@ -103,12 +101,11 @@ function drawBackgroundCover(page, img, pageW, pageH) {
   page.drawImage(img, { x, y, width: drawW, height: drawH });
 }
 
-/* ---------------- Main handler ---------------- */
-
 export async function onRequestPost({ request, env }) {
   try {
     const form = await request.formData();
 
+    // Must be provided by frontend (R2 key)
     const templateKey = (form.get("template_key") || "").toString();
     if (!templateKey) {
       return new Response(JSON.stringify({ error: "Missing template_key" }), {
@@ -117,7 +114,7 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    const paperSize = (form.get("paper_size") || "A4").toUpperCase();
+    const paperSize = (form.get("paper_size") || "A4").toString().toUpperCase();
     if (!["A4", "LETTER"].includes(paperSize)) {
       return new Response(JSON.stringify({ error: "paper_size must be A4 or LETTER." }), {
         status: 400,
@@ -125,7 +122,7 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    /* ---- Load template directly from R2 ---- */
+    // Load template image from R2
     const obj = await env.CERT_TEMPLATES.get(templateKey);
     if (!obj) {
       return new Response(JSON.stringify({ error: "Template not found in R2" }), {
@@ -133,24 +130,22 @@ export async function onRequestPost({ request, env }) {
         headers: { "Content-Type": "application/json" },
       });
     }
-
     const templateBytes = new Uint8Array(await obj.arrayBuffer());
 
-    /* ---- Parse rows ---- */
+    // Rows (json or old csv file)
     const rowsJsonStr = (form.get("rows_json") || "").toString();
     const file = form.get("file");
-
     let rows = [];
 
     if (rowsJsonStr) {
-      const parsed = safeJsonParse(rowsJsonStr, []);
-      if (!Array.isArray(parsed)) {
-        return new Response(JSON.stringify({ error: "rows_json must be array." }), {
+      const parsedRows = safeJsonParse(rowsJsonStr, []);
+      if (!Array.isArray(parsedRows)) {
+        return new Response(JSON.stringify({ error: "rows_json must be a JSON array." }), {
           status: 400,
           headers: { "Content-Type": "application/json" },
         });
       }
-      rows = parsed;
+      rows = parsedRows;
     } else {
       if (!file || typeof file === "string") {
         return new Response(JSON.stringify({ error: "Missing rows_json or CSV file." }), {
@@ -169,32 +164,39 @@ export async function onRequestPost({ request, env }) {
       rows = parsed.rows;
     }
 
+    // Normalize + limit preview
     rows = rows
       .map((r) => ({
-        name: String(r?.name || ""),
-        award: String(r?.award ?? r?.title ?? ""),
-        date: String(r?.date || ""),
-        issuer: String(r?.issuer || ""),
+        name: (r?.name || "").toString(),
+        award: (r?.award ?? r?.title ?? "").toString(),
+        date: (r?.date || "").toString(),
+        issuer: (r?.issuer || "").toString(),
       }))
       .filter((r) => r.name && r.award)
       .slice(0, MAX_PREVIEW);
 
-    if (!rows.length) {
-      return new Response(JSON.stringify({ error: "No valid rows found." }), {
+    if (rows.length === 0) {
+      return new Response(JSON.stringify({ error: "No valid rows found (need name + title/award)." }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
 
-    const certificateTitle = String(form.get("certificate_title") || "Certificate");
-    const dateTextDefault = String(form.get("date_text") || "");
-    const issuerDefault = String(form.get("issuer") || "");
-    const pos = safeJsonParse(String(form.get("pos_json") || "{}"), {});
-    const style = safeJsonParse(String(form.get("style_json") || "{}"), {});
+    // Field values
+    const certificateTitle = (form.get("certificate_title") || "Certificate of Achievement").toString();
+    const subtitle = (form.get("subtitle") || "").toString();
+    const description = (form.get("description") || "").toString();
+
+    const dateTextDefault = (form.get("date_text") || "").toString();
+    const issuerDefault = (form.get("issuer") || "").toString();
+
+    // Positions/styles
+    const pos = safeJsonParse((form.get("pos_json") || "{}").toString(), {});
+    const style = safeJsonParse((form.get("style_json") || "{}").toString(), {});
 
     const pdfDoc = await PDFDocument.create();
 
-    /* ---- Embed image (PNG or JPG) ---- */
+    // Embed template image (PNG/JPG)
     const ext = templateKey.toLowerCase().split(".").pop();
     const bgImg =
       ext === "png"
@@ -203,11 +205,16 @@ export async function onRequestPost({ request, env }) {
         ? await pdfDoc.embedJpg(templateBytes)
         : null;
 
-    if (!bgImg) throw new Error("Unsupported template format. Use PNG or JPG.");
+    if (!bgImg) {
+      return new Response(JSON.stringify({ error: "Unsupported template format. Use PNG or JPG." }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     const [w, h] = pageSize(paperSize);
 
-    /* ---- Font cache ---- */
+    // Font cache (embed once per doc)
     const fontCache = new Map();
     async function getFont(fieldKey, isBold) {
       const key = resolveFontKey(style, fieldKey, isBold);
@@ -216,75 +223,129 @@ export async function onRequestPost({ request, env }) {
       fontCache.set(key, font);
       return font;
     }
-
     const wmFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-    function colorFor(fieldKey, fallback) {
-      return hexToRgb01(style?.[fieldKey]?.color || fallback || "#000");
+    function colorFor(fieldKey, fallbackHex) {
+      const hex = (style?.[fieldKey]?.color || fallbackHex || "#000000").toString();
+      return hexToRgb01(hex);
     }
 
-    for (const row of rows) {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
       const page = pdfDoc.addPage([w, h]);
 
       drawBackgroundCover(page, bgImg, w, h);
 
-      /* ---- Certificate Title ---- */
+      // --- CERT TITLE ---
       {
-        const font = await getFont("certTitle", true);
         const text = certificateTitle;
         const { x, y } = posToPdf(pos?.certTitle, w, h);
-        const size = fitTextSize(font, text, w * 0.82, 38, 18);
+
+        const font = await getFont("certTitle", true);
+        const color = colorFor("certTitle", "#2a2a2a");
+
+        const maxWidth = w * 0.82;
+        const size = fitTextSize(font, text, maxWidth, 38, 18);
         const tw = font.widthOfTextAtSize(text, size);
-        page.drawText(text, { x: x - tw / 2, y, size, font, color: colorFor("certTitle", "#2a2a2a") });
+
+        page.drawText(text, { x: x - tw / 2, y, size, font, color });
       }
 
-      /* ---- Name ---- */
+      // --- SUBTITLE (NEW) ---
+      if (subtitle) {
+        const text = subtitle;
+        const { x, y } = posToPdf(pos?.subtitle, w, h);
+
+        const font = await getFont("subtitle", false);
+        const color = colorFor("subtitle", "#3a3a3a");
+
+        const maxWidth = w * 0.82;
+        const size = fitTextSize(font, text, maxWidth, 18, 10);
+        const tw = font.widthOfTextAtSize(text, size);
+
+        page.drawText(text, { x: x - tw / 2, y, size, font, color });
+      }
+
+      // --- NAME ---
       {
-        const font = await getFont("name", true);
         const text = row.name;
         const { x, y } = posToPdf(pos?.name, w, h);
-        const size = fitTextSize(font, text, w * 0.82, 34, 18);
+
+        const font = await getFont("name", true);
+        const color = colorFor("name", "#2a2a2a");
+
+        const maxWidth = w * 0.82;
+        const size = fitTextSize(font, text, maxWidth, 34, 18);
         const tw = font.widthOfTextAtSize(text, size);
-        page.drawText(text, { x: x - tw / 2, y, size, font, color: colorFor("name", "#2a2a2a") });
+
+        page.drawText(text, { x: x - tw / 2, y, size, font, color });
       }
 
-      /* ---- Award ---- */
+      // --- DESCRIPTION (NEW) ---
+      if (description) {
+        const text = description;
+        const { x, y } = posToPdf(pos?.description, w, h);
+
+        const font = await getFont("description", false);
+        const color = colorFor("description", "#3a3a3a");
+
+        const maxWidth = w * 0.82;
+        const size = fitTextSize(font, text, maxWidth, 16, 10);
+        const tw = font.widthOfTextAtSize(text, size);
+
+        page.drawText(text, { x: x - tw / 2, y, size, font, color });
+      }
+
+      // --- AWARD / TITLE ---
       {
-        const font = await getFont("award", false);
         const text = row.award;
         const { x, y } = posToPdf(pos?.award, w, h);
-        const size = fitTextSize(font, text, w * 0.82, 18, 11);
+
+        const font = await getFont("award", false);
+        const color = colorFor("award", "#3a3a3a");
+
+        const maxWidth = w * 0.82;
+        const size = fitTextSize(font, text, maxWidth, 18, 11);
         const tw = font.widthOfTextAtSize(text, size);
-        page.drawText(text, { x: x - tw / 2, y, size, font, color: colorFor("award", "#3a3a3a") });
+
+        page.drawText(text, { x: x - tw / 2, y, size, font, color });
       }
 
-      /* ---- Date ---- */
+      // --- DATE ---
       {
         const effectiveDate = row.date || dateTextDefault;
         if (effectiveDate) {
-          const font = await getFont("date", false);
           const text = `Date: ${effectiveDate}`;
           const { x, y } = posToPdf(pos?.date, w, h);
+
+          const font = await getFont("date", false);
+          const color = colorFor("date", "#3a3a3a");
+
           const size = 12;
           const tw = font.widthOfTextAtSize(text, size);
-          page.drawText(text, { x: x - tw / 2, y, size, font, color: colorFor("date", "#3a3a3a") });
+
+          page.drawText(text, { x: x - tw / 2, y, size, font, color });
         }
       }
 
-      /* ---- Issuer ---- */
+      // --- ISSUER ---
       {
         const effectiveIssuer = row.issuer || issuerDefault;
         if (effectiveIssuer) {
-          const font = await getFont("issuer", true);
           const text = effectiveIssuer;
           const { x, y } = posToPdf(pos?.issuer, w, h);
+
+          const font = await getFont("issuer", true);
+          const color = colorFor("issuer", "#2a2a2a");
+
           const size = 14;
           const tw = font.widthOfTextAtSize(text, size);
-          page.drawText(text, { x: x - tw / 2, y, size, font, color: colorFor("issuer", "#2a2a2a") });
+
+          page.drawText(text, { x: x - tw / 2, y, size, font, color });
         }
       }
 
-      /* ---- Watermark ---- */
+      // Watermark (preview)
       page.drawText("PREVIEW — UPGRADE TO REMOVE WATERMARK", {
         x: 40,
         y: h * 0.35,
@@ -303,6 +364,7 @@ export async function onRequestPost({ request, env }) {
         "Content-Type": "application/pdf",
         "Content-Disposition": 'attachment; filename="certificate_preview.pdf"',
         "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (e) {
@@ -312,5 +374,3 @@ export async function onRequestPost({ request, env }) {
     });
   }
 }
-
-
