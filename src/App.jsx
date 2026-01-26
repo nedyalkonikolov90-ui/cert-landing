@@ -1,25 +1,4 @@
-import { useMemo, useRef, useState } from "react";
-
-const TEMPLATES = [
-  {
-    id: "kids-fantasy-1",
-    label: "Kids Fantasy (v1)",
-    preview: {
-      A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png",
-      LETTER:
-        "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2011_07_48.png",
-    },
-  },
-  {
-    id: "professional",
-    label: "Professional",
-    preview: {
-      A4: "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2014_17_04.png",
-      LETTER:
-        "https://cdn.budgetwonders.eu/templates/ChatGPT%20Image%2026.01.2026%20%D0%B3.%2C%2014_17_04.png",
-    },
-  },
-];
+import { useEffect, useMemo, useRef, useState } from "react";
 
 // Keep these aligned with backend pdf-lib StandardFonts mapping
 const FONT_OPTIONS = [
@@ -85,12 +64,7 @@ function parseTxt(text) {
   for (const line of lines) {
     const parts = line.split(" - ");
     if (parts.length >= 2) {
-      rows.push({
-        name: parts[0].trim(),
-        award: parts.slice(1).join(" - ").trim(),
-        date: "",
-        issuer: "",
-      });
+      rows.push({ name: parts[0].trim(), award: parts.slice(1).join(" - ").trim(), date: "", issuer: "" });
     }
   }
   if (rows.length === 0) return { error: 'TXT lines must be like: "Name - Title"' };
@@ -158,6 +132,10 @@ function DraggableText({ fieldKey, text, pos, onPosChange, style, previewBoxRef 
 export default function App() {
   const [inputMode, setInputMode] = useState("manual"); // manual | upload
 
+  // Templates loaded from R2 via API
+  const [templates, setTemplates] = useState([]); // [{id,label,key}]
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+
   // Upload state
   const [uploadFile, setUploadFile] = useState(null);
   const [rows, setRows] = useState([]); // parsed rows for PDF generation
@@ -168,8 +146,8 @@ export default function App() {
   const [manualAward, setManualAward] = useState("For outstanding performance");
 
   // Common generator settings
-  const [templateId, setTemplateId] = useState(TEMPLATES[0].id);
-  const [paper, setPaper] = useState("A4");
+  const [templateId, setTemplateId] = useState("");
+  const [paper, setPaper] = useState("A4"); // A4 | LETTER
   const [busy, setBusy] = useState(false);
 
   // Fields content
@@ -197,11 +175,42 @@ export default function App() {
 
   const previewBoxRef = useRef(null);
 
+  // Load templates on mount
+  useEffect(() => {
+    (async () => {
+      setError("");
+      try {
+        setTemplatesLoading(true);
+        const res = await fetch("/api/templates");
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const list = Array.isArray(data?.templates) ? data.templates : [];
+        setTemplates(list);
+
+        // auto-select first template
+        if (list.length) {
+          setTemplateId((prev) => prev || list[0].id);
+        } else {
+          setTemplateId("");
+        }
+      } catch (e) {
+        setError(e?.message ? String(e.message) : "Failed to load templates.");
+      } finally {
+        setTemplatesLoading(false);
+      }
+    })();
+  }, []);
+
   const selectedTemplate = useMemo(
-    () => TEMPLATES.find((t) => t.id === templateId) || TEMPLATES[0],
-    [templateId]
+    () => templates.find((t) => t.id === templateId) || null,
+    [templates, templateId]
   );
-  const previewImageUrl = selectedTemplate.preview[paper] || selectedTemplate.preview.A4;
+
+  // key stored in R2
+  const templateKey = selectedTemplate?.key || "";
+
+  // Preview image always uses the uploaded A4 image
+  const previewImageUrl = templateKey ? `/api/template?key=${encodeURIComponent(templateKey)}` : "";
 
   const sampleRow = useMemo(() => {
     if (inputMode === "manual") {
@@ -240,6 +249,8 @@ export default function App() {
   async function generatePreviewPdf() {
     setError("");
 
+    if (!templateKey) return setError("No template selected. Upload templates to R2 first.");
+
     const effectiveRows =
       inputMode === "manual"
         ? [{ name: manualName, award: manualAward, date: dateText, issuer }]
@@ -251,15 +262,24 @@ export default function App() {
     try {
       const form = new FormData();
 
+      // For backend: send rows in JSON
       form.append("rows_json", JSON.stringify(effectiveRows));
-      form.append("template_id", templateId);
+
+      // NEW: send R2 template key
+      form.append("template_key", templateKey);
+
+      // Keep LETTER option
       form.append("paper_size", paper);
 
+      // Field values
       form.append("certificate_title", certTitle);
       form.append("date_text", dateText);
       form.append("issuer", issuer);
 
+      // Positions (%)
       form.append("pos_json", JSON.stringify(pos));
+
+      // Styles (font + color)
       form.append("style_json", JSON.stringify(styleByField));
 
       const res = await fetch("/api/preview", { method: "POST", body: form });
@@ -281,12 +301,6 @@ export default function App() {
       setBusy(false);
     }
   }
-
-  // Slightly more PDF-like weight mapping:
-  // PDF uses Bold vs Regular; browsers can use numeric weights, but keep it close.
-  const weightBold = 700;
-  const weightRegular = 400;
-  const weightSemi = 500;
 
   return (
     <div style={{ padding: 40, fontFamily: "system-ui" }}>
@@ -365,13 +379,28 @@ export default function App() {
               <b>Template</b>
             </label>
             <br />
-            <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={{ width: "100%" }}>
-              {TEMPLATES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
+            <select
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              style={{ width: "100%" }}
+              disabled={templatesLoading || templates.length === 0}
+            >
+              {templatesLoading ? (
+                <option>Loading templates…</option>
+              ) : templates.length === 0 ? (
+                <option>No templates found</option>
+              ) : (
+                templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))
+              )}
             </select>
+
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+              Templates are loaded from R2: <code>templates/templates/</code>
+            </div>
           </div>
 
           <div style={{ marginBottom: 12 }}>
@@ -383,6 +412,9 @@ export default function App() {
               <option value="A4">A4 (landscape)</option>
               <option value="LETTER">US Letter (landscape)</option>
             </select>
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+              Note: template image is A4; PDF generator will crop to fit Letter when selected.
+            </div>
           </div>
 
           <h2 style={{ marginTop: 16 }}>Field values</h2>
@@ -454,10 +486,6 @@ export default function App() {
                   style={{ height: 38 }}
                 />
               </div>
-
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
-                Preview font: <span style={{ fontFamily: fontFamilyFor(styleByField[k].font) }}>Sample AaBb</span>
-              </div>
             </div>
           ))}
 
@@ -465,7 +493,7 @@ export default function App() {
 
           <button
             onClick={generatePreviewPdf}
-            disabled={busy}
+            disabled={busy || templatesLoading || !templateKey}
             style={{
               marginTop: 14,
               width: "100%",
@@ -475,7 +503,7 @@ export default function App() {
               background: "#000",
               color: "#fff",
               cursor: "pointer",
-              opacity: busy ? 0.7 : 1,
+              opacity: busy || templatesLoading || !templateKey ? 0.7 : 1,
             }}
           >
             {busy ? "Generating…" : "Generate Preview PDF"}
@@ -487,18 +515,35 @@ export default function App() {
           <h2 style={{ marginTop: 0 }}>Live preview (drag any field)</h2>
 
           <div ref={previewBoxRef} style={{ position: "relative", width: "100%", maxWidth: 1200, userSelect: "none" }}>
-            <img
-              src={previewImageUrl}
-              alt="Certificate template preview"
-              style={{
-                width: "100%",
-                height: "auto",
-                display: "block",
-                borderRadius: 12,
-                boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
-              }}
-            />
+            {previewImageUrl ? (
+              <img
+                src={previewImageUrl}
+                alt="Certificate template preview"
+                style={{
+                  width: "100%",
+                  height: "auto",
+                  display: "block",
+                  borderRadius: 12,
+                  boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: "100%",
+                  height: 420,
+                  borderRadius: 12,
+                  background: "#f3f3f3",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#666",
+                }}
+              >
+                {templatesLoading ? "Loading templates…" : "No template preview available"}
+              </div>
+            )}
 
+            {/* Apply fontFamily based on selected font so preview matches PDF */}
             <DraggableText
               fieldKey="certTitle"
               text={certTitle}
@@ -507,7 +552,7 @@ export default function App() {
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.certTitle.font),
-                fontWeight: weightBold,
+                fontWeight: 700,
                 fontSize: "clamp(18px, 3.2vw, 42px)",
                 color: styleByField.certTitle.color,
               }}
@@ -521,7 +566,7 @@ export default function App() {
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.name.font),
-                fontWeight: weightBold,
+                fontWeight: 700,
                 fontSize: "clamp(14px, 2.6vw, 30px)",
                 color: styleByField.name.color,
               }}
@@ -535,7 +580,7 @@ export default function App() {
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.award.font),
-                fontWeight: weightSemi,
+                fontWeight: 400,
                 fontSize: "clamp(12px, 1.6vw, 18px)",
                 color: styleByField.award.color,
               }}
@@ -549,7 +594,7 @@ export default function App() {
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.date.font),
-                fontWeight: weightRegular,
+                fontWeight: 400,
                 fontSize: "clamp(10px, 1.2vw, 14px)",
                 color: styleByField.date.color,
               }}
@@ -563,7 +608,7 @@ export default function App() {
               previewBoxRef={previewBoxRef}
               style={{
                 fontFamily: fontFamilyFor(styleByField.issuer.font),
-                fontWeight: weightBold,
+                fontWeight: 700,
                 fontSize: "clamp(10px, 1.3vw, 16px)",
                 color: styleByField.issuer.color,
               }}
@@ -578,3 +623,4 @@ export default function App() {
     </div>
   );
 }
+
