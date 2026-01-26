@@ -40,7 +40,7 @@ function parseCsv(text) {
 
 function pageSize(paperSize) {
   // A4: 595x842 pt, US Letter: 612x792 pt
-  return paperSize === "LETTER" ? [612, 792] : [595, 842];
+  return paperSize === "LETTER" ? [792, 612] : [842, 595];
 }
 
 function centeredX(page, font, text, size) {
