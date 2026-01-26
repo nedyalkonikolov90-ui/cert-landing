@@ -1,5 +1,5 @@
 export async function onRequestGet({ env }) {
-  const PREFIX = "templates/templates/";
+  const PREFIX = "templates/";
   const bucket = env.CERT_TEMPLATES;
 
   const listed = await bucket.list({ prefix: PREFIX });
