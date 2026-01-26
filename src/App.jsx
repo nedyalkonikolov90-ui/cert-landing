@@ -1,7 +1,6 @@
 // src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
-// Keep these aligned with backend mapping (helvetica/times/courier)
 const FONT_OPTIONS = [
   { id: "helvetica", label: "Helvetica" },
   { id: "times", label: "Times" },
@@ -12,7 +11,6 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-// Make live preview match PDF “standard fonts” as closely as possible
 function fontFamilyFor(fontId) {
   switch ((fontId || "").toLowerCase()) {
     case "times":
@@ -25,6 +23,30 @@ function fontFamilyFor(fontId) {
   }
 }
 
+// Paper sizes in PDF points (landscape)
+function pageSize(paper) {
+  return paper === "LETTER" ? { w: 792, h: 612 } : { w: 842, h: 595 };
+}
+
+// Shared: fit text size down until it fits maxWidth (px)
+function fitTextPx({ text, fontFamily, fontWeight, startPx, minPx, maxWidthPx }) {
+  const t = (text ?? "").toString();
+
+  // canvas text measurement
+  const canvas = fitTextPx._c || (fitTextPx._c = document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return startPx;
+
+  let size = startPx;
+  while (size > minPx) {
+    ctx.font = `${fontWeight || 400} ${size}px ${fontFamily}`;
+    const w = ctx.measureText(t).width;
+    if (w <= maxWidthPx) break;
+    size -= 1;
+  }
+  return size;
+}
+
 function parseCsv(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
   if (lines.length < 2) return { error: "CSV must include header + at least 1 row." };
@@ -32,8 +54,8 @@ function parseCsv(text) {
   const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
   const nameIndex = header.indexOf("name");
   const titleIndex = header.indexOf("title");
-  const dateIndex = header.indexOf("date"); // optional
-  const issuerIndex = header.indexOf("issuer"); // optional
+  const dateIndex = header.indexOf("date");
+  const issuerIndex = header.indexOf("issuer");
 
   if (nameIndex === -1 || titleIndex === -1) {
     return { error: "CSV must include headers: name,title (date optional, issuer optional)." };
@@ -49,13 +71,10 @@ function parseCsv(text) {
     if (!name || !award) continue;
     rows.push({ name, award, date, issuer });
   }
-
   if (rows.length === 0) return { error: "No valid rows found (need name + title)." };
   return { rows };
 }
 
-// TXT format:
-// Each line: Name - Title
 function parseTxt(text) {
   const lines = text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
   if (lines.length === 0) return { error: "TXT must include at least 1 line." };
@@ -71,9 +90,33 @@ function parseTxt(text) {
   return { rows };
 }
 
-// Editable + draggable overlay element.
-function DraggableText({ fieldKey, text, pos, onPosChange, onTextChange, style, previewBoxRef }) {
+// Click-to-select, drag, resize handles, double-click to edit
+function DraggableResizableText({
+  fieldKey,
+  text,
+  pos,
+  onPosChange,
+  onTextChange,
+  selected,
+  onSelect,
+  style,
+  previewBoxRef,
+  pxPerPt,
+  maxWidthRatio = 0.82,
+}) {
   const [dragging, setDragging] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [resizing, setResizing] = useState(false);
+
+  const elRef = useRef(null);
+
+  // resize state
+  const resizeStart = useRef({
+    startX: 0,
+    startY: 0,
+    startSize: 0,
+    handle: "se",
+  });
 
   function pointerToPercent(clientX, clientY) {
     const el = previewBoxRef.current;
@@ -84,15 +127,81 @@ function DraggableText({ fieldKey, text, pos, onPosChange, onTextChange, style, 
     return { x: clamp(px, 0, 1), y: clamp(py, 0, 1) };
   }
 
+  const fontFamily = style?.fontFamily || "Arial, Helvetica, sans-serif";
+  const fontWeight = style?.fontWeight || 400;
+
+  const containerRect = previewBoxRef.current?.getBoundingClientRect();
+  const containerWpx = containerRect?.width || 1000;
+
+  // Start size in pt -> px
+  const startPt = Number(style?.sizePt || 16);
+  const startPx = startPt * pxPerPt;
+
+  // Auto-fit (preview) using same width ratio as PDF
+  const fittedPx = fitTextPx({
+    text,
+    fontFamily,
+    fontWeight,
+    startPx,
+    minPx: Math.max(10 * pxPerPt, 8),
+    maxWidthPx: containerWpx * maxWidthRatio,
+  });
+
+  function beginEdit() {
+    setEditing(true);
+    requestAnimationFrame(() => {
+      const el = elRef.current;
+      if (!el) return;
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    });
+  }
+
+  function endEdit(save = true) {
+    setEditing(false);
+    if (save) {
+      const v = (elRef.current?.innerText ?? "").toString();
+      onTextChange(fieldKey, v);
+    } else {
+      // revert
+      requestAnimationFrame(() => {
+        if (elRef.current) elRef.current.innerText = text || "";
+      });
+    }
+  }
+
   function onDown(e) {
-    // If user is selecting/typing in editable content, don't start drag.
-    if (e.target?.isContentEditable) return;
+    // select on click
+    onSelect(fieldKey);
+
+    if (editing || resizing) return;
+
+    // start drag
     e.preventDefault();
     setDragging(true);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   }
 
   function onMove(e) {
+    if (resizing) {
+      const dx = e.clientX - resizeStart.current.startX;
+      const dy = e.clientY - resizeStart.current.startY;
+
+      // uniform scale based on diagonal movement
+      const delta = Math.max(dx, dy);
+      const scale = 1 + delta / 240; // tune sensitivity
+      const newSize = clamp(resizeStart.current.startSize * scale, 8, 120);
+
+      // NOTE: we pass back a “sizePt” update via custom event on style object
+      style?.onSizeChange?.(fieldKey, newSize);
+      return;
+    }
+
     if (!dragging) return;
     const p = pointerToPercent(e.clientX, e.clientY);
     if (p) onPosChange(fieldKey, p);
@@ -100,7 +209,23 @@ function DraggableText({ fieldKey, text, pos, onPosChange, onTextChange, style, 
 
   function onUp() {
     setDragging(false);
+    setResizing(false);
   }
+
+  function startResize(e, handle) {
+    e.preventDefault();
+    e.stopPropagation();
+    onSelect(fieldKey);
+    setResizing(true);
+    resizeStart.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startSize: Number(style?.sizePt || 16),
+      handle,
+    };
+  }
+
+  const showFrame = selected && !editing;
 
   return (
     <div
@@ -108,85 +233,153 @@ function DraggableText({ fieldKey, text, pos, onPosChange, onTextChange, style, 
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerLeave={onUp}
-      contentEditable
-      suppressContentEditableWarning
-      onBlur={(e) => onTextChange(fieldKey, e.currentTarget.innerText)}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect(fieldKey);
+      }}
+      onDoubleClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onSelect(fieldKey);
+        beginEdit();
+      }}
       style={{
         position: "absolute",
         left: `${pos.x * 100}%`,
         top: `${pos.y * 100}%`,
         transform: "translate(-50%, -50%)",
-        cursor: dragging ? "grabbing" : "grab",
+        cursor: editing ? "text" : resizing ? "nwse-resize" : dragging ? "grabbing" : "grab",
         padding: "6px 10px",
         borderRadius: 10,
-        background: dragging ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.22)",
-        border: "1px dashed rgba(0,0,0,0.28)",
+        background: editing ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.18)",
+        border: showFrame ? "2px solid rgba(0, 120, 255, 0.85)" : "1px dashed rgba(0,0,0,0.22)",
+        boxShadow: showFrame ? "0 10px 25px rgba(0,0,0,0.12)" : "none",
         touchAction: "none",
-        userSelect: "text",
+        userSelect: editing ? "text" : "none",
         whiteSpace: "nowrap",
         outline: "none",
-        ...style,
+        pointerEvents: "auto",
       }}
-      title="Edit text, or drag to reposition"
+      title={editing ? "Editing… click outside to save" : "Click to select • Drag to move • Double-click to edit"}
     >
-      {text || " "}
+      <div
+        ref={elRef}
+        contentEditable={editing}
+        suppressContentEditableWarning
+        spellCheck={false}
+        onBlur={() => endEdit(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            elRef.current?.blur();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            endEdit(false);
+          }
+        }}
+        style={{
+          pointerEvents: editing ? "auto" : "none",
+          fontFamily,
+          fontWeight,
+          fontSize: `${fittedPx}px`,
+          color: style?.color || "#222",
+        }}
+      >
+        {text || " "}
+      </div>
+
+      {/* Resize handles */}
+      {selected && !editing && (
+        <>
+          {/* SE handle */}
+          <div
+            onPointerDown={(e) => startResize(e, "se")}
+            style={{
+              position: "absolute",
+              right: -8,
+              bottom: -8,
+              width: 14,
+              height: 14,
+              borderRadius: 4,
+              background: "rgba(0, 120, 255, 0.95)",
+              border: "2px solid white",
+              cursor: "nwse-resize",
+            }}
+            title="Resize"
+          />
+          {/* Optional: NW handle */}
+          <div
+            onPointerDown={(e) => startResize(e, "nw")}
+            style={{
+              position: "absolute",
+              left: -8,
+              top: -8,
+              width: 14,
+              height: 14,
+              borderRadius: 4,
+              background: "rgba(0, 120, 255, 0.95)",
+              border: "2px solid white",
+              cursor: "nwse-resize",
+            }}
+            title="Resize"
+          />
+        </>
+      )}
     </div>
   );
 }
 
 export default function App() {
-  const [inputMode, setInputMode] = useState("manual"); // manual | upload
+  const [inputMode, setInputMode] = useState("manual");
 
-  // Templates loaded from R2 via API
   const [templates, setTemplates] = useState([]); // [{id,label,key}]
   const [templatesLoading, setTemplatesLoading] = useState(true);
 
-  // Upload state
   const [uploadFile, setUploadFile] = useState(null);
-  const [rows, setRows] = useState([]); // parsed rows for PDF generation
+  const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
 
-  // Manual entry state (single row)
   const [manualName, setManualName] = useState("Student Name");
   const [manualAward, setManualAward] = useState("For outstanding performance");
 
-  // Common generator settings
   const [templateId, setTemplateId] = useState("");
   const [paper, setPaper] = useState("A4");
   const [busy, setBusy] = useState(false);
 
-  // Editable fields on template
+  // Editable fields (on template)
   const [certTitle, setCertTitle] = useState("Certificate of Achievement");
-  const [subtitle, setSubtitle] = useState("Presented to"); // NEW (below title)
+  const [subtitle, setSubtitle] = useState("Presented to");
+  const [description, setDescription] = useState("For outstanding effort and dedication");
   const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
   const [issuer, setIssuer] = useState("Issuer / Organization");
-  const [description, setDescription] = useState("For outstanding effort and dedication"); // NEW (below name)
 
-  // Positions (% of preview box)
+  // Positions (%)
   const [pos, setPos] = useState({
     certTitle: { x: 0.5, y: 0.18 },
-    subtitle: { x: 0.5, y: 0.26 }, // NEW
+    subtitle: { x: 0.5, y: 0.26 },
     name: { x: 0.5, y: 0.42 },
-    description: { x: 0.5, y: 0.48 }, // NEW
+    description: { x: 0.5, y: 0.48 },
     award: { x: 0.5, y: 0.54 },
-    date: { x: 0.10, y: 0.92 },
-    issuer: { x: 0.80, y: 0.88 },
+    date: { x: 0.12, y: 0.92 },
+    issuer: { x: 0.82, y: 0.88 },
   });
 
-  // Style per field: font + color
+  // Style per field: font + color + size (pt)
   const [styleByField, setStyleByField] = useState({
-    certTitle: { font: "helvetica", color: "#2a2a2a" },
-    subtitle: { font: "helvetica", color: "#3a3a3a" }, // NEW
-    name: { font: "helvetica", color: "#2a2a2a" },
-    description: { font: "helvetica", color: "#3a3a3a" }, // NEW
-    award: { font: "helvetica", color: "#3a3a3a" },
-    date: { font: "helvetica", color: "#3a3a3a" },
-    issuer: { font: "helvetica", color: "#2a2a2a" },
+    certTitle: { font: "helvetica", color: "#2a2a2a", size: 38 },
+    subtitle: { font: "helvetica", color: "#3a3a3a", size: 18 },
+    name: { font: "helvetica", color: "#2a2a2a", size: 34 },
+    description: { font: "helvetica", color: "#3a3a3a", size: 16 },
+    award: { font: "helvetica", color: "#3a3a3a", size: 18 },
+    date: { font: "helvetica", color: "#3a3a3a", size: 12 },
+    issuer: { font: "helvetica", color: "#2a2a2a", size: 14 },
   });
+
+  const [selectedField, setSelectedField] = useState(null);
 
   const previewBoxRef = useRef(null);
 
-  // Load templates on mount
   useEffect(() => {
     (async () => {
       setError("");
@@ -231,7 +424,7 @@ export default function App() {
   }
 
   function updateText(fieldKey, value) {
-    const v = (value ?? "").toString().replace(/\r/g, "");
+    const v = (value ?? "").toString().replace(/\r/g, "").trim();
 
     if (fieldKey === "certTitle") setCertTitle(v);
     if (fieldKey === "subtitle") setSubtitle(v);
@@ -280,11 +473,9 @@ export default function App() {
       form.append("template_key", templateKey);
       form.append("paper_size", paper);
 
-      // main fields
       form.append("certificate_title", certTitle);
       form.append("subtitle", subtitle);
       form.append("description", description);
-
       form.append("date_text", dateText);
       form.append("issuer", issuer);
 
@@ -309,6 +500,28 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  const { w: pageW, h: pageH } = pageSize(paper);
+
+  // px-per-pt based on container width
+  const [pxPerPt, setPxPerPt] = useState(1.0);
+
+  useEffect(() => {
+    function recalc() {
+      const el = previewBoxRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (!rect.width) return;
+      setPxPerPt(rect.width / pageW); // 1pt -> px scale
+    }
+    recalc();
+    window.addEventListener("resize", recalc);
+    return () => window.removeEventListener("resize", recalc);
+  }, [paper, pageW]);
+
+  function sizeChange(fieldKey, newSizePt) {
+    updateStyle(fieldKey, { size: newSizePt });
   }
 
   const fieldList = ["certTitle", "subtitle", "name", "description", "award", "date", "issuer"];
@@ -422,20 +635,15 @@ export default function App() {
               <option value="A4">A4 (landscape)</option>
               <option value="LETTER">US Letter (landscape)</option>
             </select>
-            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-              Note: your template image is A4; Letter will crop slightly in the generated PDF.
-            </div>
           </div>
 
-          <h2 style={{ marginTop: 16 }}>Font & color</h2>
+          <h2 style={{ marginTop: 16 }}>Font, color, size</h2>
           {fieldList.map((k) => (
             <div key={k} style={{ marginBottom: 10, padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>{prettyFieldName(k)}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10 }}>
-                <select
-                  value={styleByField[k].font}
-                  onChange={(e) => updateStyle(k, { font: e.target.value })}
-                >
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10, marginBottom: 8 }}>
+                <select value={styleByField[k].font} onChange={(e) => updateStyle(k, { font: e.target.value })}>
                   {FONT_OPTIONS.map((f) => (
                     <option key={f.id} value={f.id}>{f.label}</option>
                   ))}
@@ -447,6 +655,20 @@ export default function App() {
                   onChange={(e) => updateStyle(k, { color: e.target.value })}
                   style={{ height: 38 }}
                 />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 70px", gap: 10, alignItems: "center" }}>
+                <input
+                  type="range"
+                  min={8}
+                  max={90}
+                  step={1}
+                  value={Math.round(styleByField[k].size)}
+                  onChange={(e) => updateStyle(k, { size: Number(e.target.value) })}
+                />
+                <div style={{ fontSize: 12, opacity: 0.75, textAlign: "right" }}>
+                  {Math.round(styleByField[k].size)} pt
+                </div>
               </div>
             </div>
           ))}
@@ -472,158 +694,195 @@ export default function App() {
           </button>
 
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            Tip: Edit text directly on the template (click → type), then click outside to save.
+            Preview rules: Click to select • Drag to move • Resize with handles • Double-click to edit.
           </div>
         </div>
 
         {/* PREVIEW */}
-        <div style={{ padding: 20, border: "1px solid #ddd", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Live preview (edit + drag)</h2>
+        <div
+          style={{ padding: 20, border: "1px solid #ddd", borderRadius: 12 }}
+          onClick={() => setSelectedField(null)}
+        >
+          <h2 style={{ marginTop: 0 }}>Live preview (matches PDF export)</h2>
 
+          {/* Paper aspect container (matches PDF page) */}
           <div
             ref={previewBoxRef}
-            style={{ position: "relative", width: "100%", maxWidth: 1200, userSelect: "none" }}
+            style={{
+              position: "relative",
+              width: "100%",
+              maxWidth: 1200,
+              aspectRatio: `${pageW} / ${pageH}`,
+              borderRadius: 12,
+              overflow: "hidden",
+              boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
+              background: "#f3f3f3",
+            }}
           >
             {previewImageUrl ? (
               <img
                 src={previewImageUrl}
                 alt="Certificate template preview"
                 style={{
+                  position: "absolute",
+                  inset: 0,
                   width: "100%",
-                  height: "auto",
-                  display: "block",
-                  borderRadius: 12,
-                  boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
+                  height: "100%",
+                  objectFit: "cover", // IMPORTANT: matches PDF background cover crop
                 }}
               />
             ) : (
-              <div
-                style={{
-                  width: "100%",
-                  height: 420,
-                  borderRadius: 12,
-                  background: "#f3f3f3",
-                  display: "grid",
-                  placeItems: "center",
-                  color: "#666",
-                }}
-              >
+              <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#666" }}>
                 {templatesLoading ? "Loading templates…" : "No template preview available"}
               </div>
             )}
 
-            <DraggableText
+            <DraggableResizableText
               fieldKey="certTitle"
               text={certTitle}
               pos={pos.certTitle}
               onPosChange={updatePos}
               onTextChange={updateText}
+              selected={selectedField === "certTitle"}
+              onSelect={setSelectedField}
               previewBoxRef={previewBoxRef}
+              pxPerPt={pxPerPt}
+              maxWidthRatio={0.82}
               style={{
                 fontFamily: fontFamilyFor(styleByField.certTitle.font),
                 fontWeight: 800,
-                fontSize: "clamp(18px, 3.2vw, 42px)",
                 color: styleByField.certTitle.color,
+                sizePt: styleByField.certTitle.size,
+                onSizeChange: sizeChange,
               }}
             />
 
-            <DraggableText
+            <DraggableResizableText
               fieldKey="subtitle"
               text={subtitle}
               pos={pos.subtitle}
               onPosChange={updatePos}
               onTextChange={updateText}
+              selected={selectedField === "subtitle"}
+              onSelect={setSelectedField}
               previewBoxRef={previewBoxRef}
+              pxPerPt={pxPerPt}
+              maxWidthRatio={0.82}
               style={{
                 fontFamily: fontFamilyFor(styleByField.subtitle.font),
                 fontWeight: 500,
-                fontSize: "clamp(12px, 1.8vw, 20px)",
                 color: styleByField.subtitle.color,
+                sizePt: styleByField.subtitle.size,
+                onSizeChange: sizeChange,
               }}
             />
 
-            <DraggableText
+            <DraggableResizableText
               fieldKey="name"
               text={sampleRow.name}
               pos={pos.name}
               onPosChange={updatePos}
               onTextChange={updateText}
+              selected={selectedField === "name"}
+              onSelect={setSelectedField}
               previewBoxRef={previewBoxRef}
+              pxPerPt={pxPerPt}
+              maxWidthRatio={0.82}
               style={{
                 fontFamily: fontFamilyFor(styleByField.name.font),
                 fontWeight: 800,
-                fontSize: "clamp(14px, 2.6vw, 30px)",
                 color: styleByField.name.color,
+                sizePt: styleByField.name.size,
+                onSizeChange: sizeChange,
               }}
             />
 
-            <DraggableText
+            <DraggableResizableText
               fieldKey="description"
               text={description}
               pos={pos.description}
               onPosChange={updatePos}
               onTextChange={updateText}
+              selected={selectedField === "description"}
+              onSelect={setSelectedField}
               previewBoxRef={previewBoxRef}
+              pxPerPt={pxPerPt}
+              maxWidthRatio={0.82}
               style={{
                 fontFamily: fontFamilyFor(styleByField.description.font),
                 fontWeight: 400,
-                fontSize: "clamp(12px, 1.6vw, 18px)",
                 color: styleByField.description.color,
+                sizePt: styleByField.description.size,
+                onSizeChange: sizeChange,
               }}
             />
 
-            <DraggableText
+            <DraggableResizableText
               fieldKey="award"
               text={sampleRow.award}
               pos={pos.award}
               onPosChange={updatePos}
               onTextChange={updateText}
+              selected={selectedField === "award"}
+              onSelect={setSelectedField}
               previewBoxRef={previewBoxRef}
+              pxPerPt={pxPerPt}
+              maxWidthRatio={0.82}
               style={{
                 fontFamily: fontFamilyFor(styleByField.award.font),
                 fontWeight: 600,
-                fontSize: "clamp(12px, 1.6vw, 18px)",
                 color: styleByField.award.color,
+                sizePt: styleByField.award.size,
+                onSizeChange: sizeChange,
               }}
             />
 
-            <DraggableText
+            <DraggableResizableText
               fieldKey="date"
               text={dateText ? `Date: ${dateText}` : "Date: ____-__-__"}
               pos={pos.date}
               onPosChange={updatePos}
               onTextChange={updateText}
+              selected={selectedField === "date"}
+              onSelect={setSelectedField}
               previewBoxRef={previewBoxRef}
+              pxPerPt={pxPerPt}
+              maxWidthRatio={0.50}
               style={{
                 fontFamily: fontFamilyFor(styleByField.date.font),
                 fontWeight: 600,
-                fontSize: "clamp(10px, 1.2vw, 14px)",
                 color: styleByField.date.color,
+                sizePt: styleByField.date.size,
+                onSizeChange: sizeChange,
               }}
             />
 
-            <DraggableText
+            <DraggableResizableText
               fieldKey="issuer"
               text={issuer || "Issuer / Organization"}
               pos={pos.issuer}
               onPosChange={updatePos}
               onTextChange={updateText}
+              selected={selectedField === "issuer"}
+              onSelect={setSelectedField}
               previewBoxRef={previewBoxRef}
+              pxPerPt={pxPerPt}
+              maxWidthRatio={0.50}
               style={{
                 fontFamily: fontFamilyFor(styleByField.issuer.font),
                 fontWeight: 700,
-                fontSize: "clamp(10px, 1.3vw, 16px)",
                 color: styleByField.issuer.color,
+                sizePt: styleByField.issuer.size,
+                onSizeChange: sizeChange,
               }}
             />
           </div>
 
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            Position + style are sent to the PDF generator.
+            Background crop + font sizes + fit-to-width match the PDF export.
           </div>
         </div>
       </div>
     </div>
   );
 }
-
