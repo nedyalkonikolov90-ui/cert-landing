@@ -32,6 +32,20 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+// Make preview fonts match PDF standard fonts as closely as possible
+function fontFamilyFor(fontId) {
+  switch ((fontId || "").toLowerCase()) {
+    case "times":
+      return '"Times New Roman", Times, serif';
+    case "courier":
+      return '"Courier New", Courier, monospace';
+    case "helvetica":
+    default:
+      // Helvetica isn't guaranteed on Windows; Arial is the closest common fallback
+      return "Arial, Helvetica, sans-serif";
+  }
+}
+
 function parseCsv(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
   if (lines.length < 2) return { error: "CSV must include header + at least 1 row." };
@@ -63,7 +77,6 @@ function parseCsv(text) {
 
 // TXT format (simple MVP):
 // Each line: Name - Title
-// Example: John Smith - Certificate of Completion
 function parseTxt(text) {
   const lines = text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
   if (lines.length === 0) return { error: "TXT must include at least 1 line." };
@@ -72,10 +85,12 @@ function parseTxt(text) {
   for (const line of lines) {
     const parts = line.split(" - ");
     if (parts.length >= 2) {
-      rows.push({ name: parts[0].trim(), award: parts.slice(1).join(" - ").trim(), date: "", issuer: "" });
-    } else {
-      // If user provides only a name, keep award empty -> skip
-      // You can change this behavior if you want.
+      rows.push({
+        name: parts[0].trim(),
+        award: parts.slice(1).join(" - ").trim(),
+        date: "",
+        issuer: "",
+      });
     }
   }
   if (rows.length === 0) return { error: 'TXT lines must be like: "Name - Title"' };
@@ -84,14 +99,7 @@ function parseTxt(text) {
 
 // Generic draggable overlay element.
 // Stores positions in percent of preview box (0..1)
-function DraggableText({
-  fieldKey,
-  text,
-  pos,
-  onPosChange,
-  style,
-  previewBoxRef,
-}) {
+function DraggableText({ fieldKey, text, pos, onPosChange, style, previewBoxRef }) {
   const [dragging, setDragging] = useState(false);
 
   function pointerToPercent(clientX, clientY) {
@@ -130,7 +138,7 @@ function DraggableText({
         left: `${pos.x * 100}%`,
         top: `${pos.y * 100}%`,
         transform: "translate(-50%, -50%)",
-        cursor: "grab",
+        cursor: dragging ? "grabbing" : "grab",
         padding: "6px 10px",
         borderRadius: 10,
         background: dragging ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.25)",
@@ -173,9 +181,9 @@ export default function App() {
   const [pos, setPos] = useState({
     certTitle: { x: 0.5, y: 0.18 },
     name: { x: 0.5, y: 0.42 },
-    award: { x: 0.5, y: 0.50 },
-    date: { x: 0.10, y: 0.92 },
-    issuer: { x: 0.80, y: 0.88 },
+    award: { x: 0.5, y: 0.5 },
+    date: { x: 0.1, y: 0.92 },
+    issuer: { x: 0.8, y: 0.88 },
   });
 
   // Style per field: font + color
@@ -243,21 +251,15 @@ export default function App() {
     try {
       const form = new FormData();
 
-      // For backend: send CSV-like data in JSON for simplicity (no re-parsing issues)
       form.append("rows_json", JSON.stringify(effectiveRows));
-
       form.append("template_id", templateId);
       form.append("paper_size", paper);
 
-      // Field values
       form.append("certificate_title", certTitle);
       form.append("date_text", dateText);
       form.append("issuer", issuer);
 
-      // Positions (%)
       form.append("pos_json", JSON.stringify(pos));
-
-      // Styles (font + color)
       form.append("style_json", JSON.stringify(styleByField));
 
       const res = await fetch("/api/preview", { method: "POST", body: form });
@@ -280,6 +282,12 @@ export default function App() {
     }
   }
 
+  // Slightly more PDF-like weight mapping:
+  // PDF uses Bold vs Regular; browsers can use numeric weights, but keep it close.
+  const weightBold = 700;
+  const weightRegular = 400;
+  const weightSemi = 500;
+
   return (
     <div style={{ padding: 40, fontFamily: "system-ui" }}>
       <h1>Certificate Generator</h1>
@@ -290,7 +298,10 @@ export default function App() {
           <h2 style={{ marginTop: 0 }}>Inputs</h2>
 
           <div style={{ marginBottom: 12 }}>
-            <label><b>Input mode</b></label><br />
+            <label>
+              <b>Input mode</b>
+            </label>
+            <br />
             <select value={inputMode} onChange={(e) => setInputMode(e.target.value)} style={{ width: "100%" }}>
               <option value="manual">Manual (single certificate)</option>
               <option value="upload">Upload CSV/TXT (batch)</option>
@@ -300,27 +311,43 @@ export default function App() {
           {inputMode === "manual" ? (
             <>
               <div style={{ marginBottom: 12 }}>
-                <label><b>Name</b></label><br />
-                <input value={manualName} onChange={(e) => setManualName(e.target.value)}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }} />
+                <label>
+                  <b>Name</b>
+                </label>
+                <br />
+                <input
+                  value={manualName}
+                  onChange={(e) => setManualName(e.target.value)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
+                />
               </div>
               <div style={{ marginBottom: 12 }}>
-                <label><b>Title / Award</b></label><br />
-                <input value={manualAward} onChange={(e) => setManualAward(e.target.value)}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }} />
+                <label>
+                  <b>Title / Award</b>
+                </label>
+                <br />
+                <input
+                  value={manualAward}
+                  onChange={(e) => setManualAward(e.target.value)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
+                />
               </div>
             </>
           ) : (
             <>
               <div style={{ marginBottom: 12 }}>
-                <label><b>Upload .csv or .txt</b></label><br />
+                <label>
+                  <b>Upload .csv or .txt</b>
+                </label>
+                <br />
                 <input
                   type="file"
                   accept=".csv,.txt,text/csv,text/plain"
                   onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
                 />
                 <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-                  CSV headers: <code>name,title</code> (optional: <code>date</code>, <code>issuer</code>)<br />
+                  CSV headers: <code>name,title</code> (optional: <code>date</code>, <code>issuer</code>)
+                  <br />
                   TXT lines: <code>Name - Title</code>
                 </div>
                 {uploadFile && rows.length > 0 && (
@@ -334,14 +361,24 @@ export default function App() {
 
           <h2 style={{ marginTop: 16 }}>Template</h2>
           <div style={{ marginBottom: 12 }}>
-            <label><b>Template</b></label><br />
+            <label>
+              <b>Template</b>
+            </label>
+            <br />
             <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={{ width: "100%" }}>
-              {TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              {TEMPLATES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
             </select>
           </div>
 
           <div style={{ marginBottom: 12 }}>
-            <label><b>Paper size</b></label><br />
+            <label>
+              <b>Paper size</b>
+            </label>
+            <br />
             <select value={paper} onChange={(e) => setPaper(e.target.value)} style={{ width: "100%" }}>
               <option value="A4">A4 (landscape)</option>
               <option value="LETTER">US Letter (landscape)</option>
@@ -350,40 +387,64 @@ export default function App() {
 
           <h2 style={{ marginTop: 16 }}>Field values</h2>
           <div style={{ marginBottom: 12 }}>
-            <label><b>Certificate title</b></label><br />
-            <input value={certTitle} onChange={(e) => setCertTitle(e.target.value)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }} />
+            <label>
+              <b>Certificate title</b>
+            </label>
+            <br />
+            <input
+              value={certTitle}
+              onChange={(e) => setCertTitle(e.target.value)}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
+            />
           </div>
 
           <div style={{ marginBottom: 12 }}>
-            <label><b>Date</b></label><br />
-            <input value={dateText} onChange={(e) => setDateText(e.target.value)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }} />
+            <label>
+              <b>Date</b>
+            </label>
+            <br />
+            <input
+              value={dateText}
+              onChange={(e) => setDateText(e.target.value)}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
+            />
           </div>
 
           <div style={{ marginBottom: 12 }}>
-            <label><b>Issuer</b></label><br />
-            <input value={issuer} onChange={(e) => setIssuer(e.target.value)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }} />
+            <label>
+              <b>Issuer</b>
+            </label>
+            <br />
+            <input
+              value={issuer}
+              onChange={(e) => setIssuer(e.target.value)}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
+            />
           </div>
 
           <h2 style={{ marginTop: 16 }}>Font & color</h2>
 
-          {["certTitle","name","award","date","issuer"].map((k) => (
+          {["certTitle", "name", "award", "date", "issuer"].map((k) => (
             <div key={k} style={{ marginBottom: 10, padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>
-                {k === "certTitle" ? "Certificate Title" :
-                 k === "name" ? "Name" :
-                 k === "award" ? "Title / Award" :
-                 k === "date" ? "Date" : "Issuer"}
+                {k === "certTitle"
+                  ? "Certificate Title"
+                  : k === "name"
+                  ? "Name"
+                  : k === "award"
+                  ? "Title / Award"
+                  : k === "date"
+                  ? "Date"
+                  : "Issuer"}
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10 }}>
-                <select
-                  value={styleByField[k].font}
-                  onChange={(e) => updateStyle(k, { font: e.target.value })}
-                >
-                  {FONT_OPTIONS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                <select value={styleByField[k].font} onChange={(e) => updateStyle(k, { font: e.target.value })}>
+                  {FONT_OPTIONS.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
                 </select>
 
                 <input
@@ -392,6 +453,10 @@ export default function App() {
                   onChange={(e) => updateStyle(k, { color: e.target.value })}
                   style={{ height: 38 }}
                 />
+              </div>
+
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+                Preview font: <span style={{ fontFamily: fontFamilyFor(styleByField[k].font) }}>Sample AaBb</span>
               </div>
             </div>
           ))}
@@ -421,10 +486,7 @@ export default function App() {
         <div style={{ padding: 20, border: "1px solid #ddd", borderRadius: 12 }}>
           <h2 style={{ marginTop: 0 }}>Live preview (drag any field)</h2>
 
-          <div
-            ref={previewBoxRef}
-            style={{ position: "relative", width: "100%", maxWidth: 1200, userSelect: "none" }}
-          >
+          <div ref={previewBoxRef} style={{ position: "relative", width: "100%", maxWidth: 1200, userSelect: "none" }}>
             <img
               src={previewImageUrl}
               alt="Certificate template preview"
@@ -444,7 +506,8 @@ export default function App() {
               onPosChange={updatePos}
               previewBoxRef={previewBoxRef}
               style={{
-                fontWeight: 800,
+                fontFamily: fontFamilyFor(styleByField.certTitle.font),
+                fontWeight: weightBold,
                 fontSize: "clamp(18px, 3.2vw, 42px)",
                 color: styleByField.certTitle.color,
               }}
@@ -457,7 +520,8 @@ export default function App() {
               onPosChange={updatePos}
               previewBoxRef={previewBoxRef}
               style={{
-                fontWeight: 800,
+                fontFamily: fontFamilyFor(styleByField.name.font),
+                fontWeight: weightBold,
                 fontSize: "clamp(14px, 2.6vw, 30px)",
                 color: styleByField.name.color,
               }}
@@ -470,7 +534,8 @@ export default function App() {
               onPosChange={updatePos}
               previewBoxRef={previewBoxRef}
               style={{
-                fontWeight: 600,
+                fontFamily: fontFamilyFor(styleByField.award.font),
+                fontWeight: weightSemi,
                 fontSize: "clamp(12px, 1.6vw, 18px)",
                 color: styleByField.award.color,
               }}
@@ -483,7 +548,8 @@ export default function App() {
               onPosChange={updatePos}
               previewBoxRef={previewBoxRef}
               style={{
-                fontWeight: 600,
+                fontFamily: fontFamilyFor(styleByField.date.font),
+                fontWeight: weightRegular,
                 fontSize: "clamp(10px, 1.2vw, 14px)",
                 color: styleByField.date.color,
               }}
@@ -496,7 +562,8 @@ export default function App() {
               onPosChange={updatePos}
               previewBoxRef={previewBoxRef}
               style={{
-                fontWeight: 700,
+                fontFamily: fontFamilyFor(styleByField.issuer.font),
+                fontWeight: weightBold,
                 fontSize: "clamp(10px, 1.3vw, 16px)",
                 color: styleByField.issuer.color,
               }}
