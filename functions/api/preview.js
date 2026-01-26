@@ -1,7 +1,7 @@
 /// functions/api/preview.js
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 
-const MAX_PREVIEW = 5;
+const MAX_PREVIEW = 50;
 
 function parseCsv(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
