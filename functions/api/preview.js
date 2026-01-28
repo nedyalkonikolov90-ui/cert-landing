@@ -1,7 +1,7 @@
-/// functions/api/preview.js
+// functions/api/preview.js
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 
-const MAX_PREVIEW = 50;
+const MAX_PREVIEW = 5;
 
 function parseCsv(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
@@ -33,6 +33,7 @@ function parseCsv(text) {
 }
 
 function pageSize(paperSize) {
+  // A4 landscape: 842 x 595, Letter landscape: 792 x 612
   return paperSize === "LETTER" ? [792, 612] : [842, 595];
 }
 
@@ -41,6 +42,8 @@ function clamp01(n) {
   return Math.max(0, Math.min(1, n));
 }
 
+// UI position: {x:0..1, y:0..1} where y=0 is top
+// PDF uses y=0 bottom => flip y
 function posToPdf(posObj, w, h) {
   const x = clamp01(Number(posObj?.x ?? 0.5)) * w;
   const yTop = clamp01(Number(posObj?.y ?? 0.5));
@@ -57,13 +60,6 @@ function hexToRgb01(hex) {
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
 
-function fitTextSize(font, text, maxWidth, startSize, minSize) {
-  const t = (text ?? "").toString();
-  let size = startSize;
-  while (size > minSize && font.widthOfTextAtSize(t, size) > maxWidth) size -= 1;
-  return size;
-}
-
 function safeJsonParse(str, fallback) {
   try {
     return JSON.parse(str);
@@ -72,11 +68,23 @@ function safeJsonParse(str, fallback) {
   }
 }
 
+// Draw background image as "cover" (keeps aspect ratio, fills page)
+function drawBackgroundCover(page, img, pageW, pageH) {
+  const imgW = img.width;
+  const imgH = img.height;
+  const scale = Math.max(pageW / imgW, pageH / imgH);
+  const drawW = imgW * scale;
+  const drawH = imgH * scale;
+  const x = (pageW - drawW) / 2;
+  const y = (pageH - drawH) / 2;
+  page.drawImage(img, { x, y, width: drawW, height: drawH });
+}
+
+// StandardFonts mapping
 function resolveFontKey(style, fieldKey, isBold) {
   const fontId = (style?.[fieldKey]?.font || "helvetica").toString().toLowerCase();
   return `${fontId}:${isBold ? "bold" : "regular"}`;
 }
-
 function fontNameForKey(key) {
   const [fontId, weight] = key.split(":");
   const bold = weight === "bold";
@@ -85,24 +93,26 @@ function fontNameForKey(key) {
   return bold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica;
 }
 
-// Background “cover” crop (MUST match preview object-fit: cover)
-function drawBackgroundCover(page, img, pageW, pageH) {
-  const imgW = img.width;
-  const imgH = img.height;
-
-  const scale = Math.max(pageW / imgW, pageH / imgH);
-  const drawW = imgW * scale;
-  const drawH = imgH * scale;
-
-  const x = (pageW - drawW) / 2;
-  const y = (pageH - drawH) / 2;
-
-  page.drawImage(img, { x, y, width: drawW, height: drawH });
+// ---------- NEW: size handling + optional fit ----------
+function readSize(style, fieldKey, fallback) {
+  const raw = style?.[fieldKey]?.size;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 1 && n < 300) return n;
+  return fallback;
 }
 
-function sizeFor(style, fieldKey, fallback) {
-  const n = Number(style?.[fieldKey]?.size);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+function fitToWidth(font, text, size, maxWidth, minSize = 8) {
+  const t = (text ?? "").toString();
+  let s = size;
+  while (s > minSize && font.widthOfTextAtSize(t, s) > maxWidth) s -= 1;
+  return s;
+}
+
+// Optional: treat “weight” on UI as bold toggle for PDF built-in fonts
+function isBoldFromWeight(style, fieldKey, defaultBold) {
+  const w = Number(style?.[fieldKey]?.weight);
+  if (Number.isFinite(w)) return w >= 700;
+  return !!defaultBold;
 }
 
 export async function onRequestPost({ request, env }) {
@@ -125,7 +135,7 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    // Load template image from R2
+    // Get template from R2
     const obj = await env.CERT_TEMPLATES.get(templateKey);
     if (!obj) {
       return new Response(JSON.stringify({ error: "Template not found in R2" }), {
@@ -135,11 +145,11 @@ export async function onRequestPost({ request, env }) {
     }
     const templateBytes = new Uint8Array(await obj.arrayBuffer());
 
-    // Rows (json or old csv)
+    // Rows
     const rowsJsonStr = (form.get("rows_json") || "").toString();
     const file = form.get("file");
-    let rows = [];
 
+    let rows = [];
     if (rowsJsonStr) {
       const parsedRows = safeJsonParse(rowsJsonStr, []);
       if (!Array.isArray(parsedRows)) {
@@ -184,20 +194,20 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    // Fields
+    // Field values
     const certificateTitle = (form.get("certificate_title") || "Certificate of Achievement").toString();
     const subtitle = (form.get("subtitle") || "").toString();
     const description = (form.get("description") || "").toString();
     const dateTextDefault = (form.get("date_text") || "").toString();
     const issuerDefault = (form.get("issuer") || "").toString();
 
-    // Pos/style
+    // Positions + style
     const pos = safeJsonParse((form.get("pos_json") || "{}").toString(), {});
     const style = safeJsonParse((form.get("style_json") || "{}").toString(), {});
 
     const pdfDoc = await PDFDocument.create();
 
-    // Embed template image (PNG/JPG)
+    // Embed background (PNG/JPG)
     const ext = templateKey.toLowerCase().split(".").pop();
     const bgImg =
       ext === "png"
@@ -217,13 +227,15 @@ export async function onRequestPost({ request, env }) {
 
     // Font cache
     const fontCache = new Map();
-    async function getFont(fieldKey, isBold) {
-      const key = resolveFontKey(style, fieldKey, isBold);
+    async function getFont(fieldKey, defaultBold) {
+      const bold = isBoldFromWeight(style, fieldKey, defaultBold);
+      const key = resolveFontKey(style, fieldKey, bold);
       if (fontCache.has(key)) return fontCache.get(key);
       const font = await pdfDoc.embedFont(fontNameForKey(key));
       fontCache.set(key, font);
       return font;
     }
+
     const wmFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
     function colorFor(fieldKey, fallbackHex) {
@@ -231,129 +243,148 @@ export async function onRequestPost({ request, env }) {
       return hexToRgb01(hex);
     }
 
-    // Width rules must match App.jsx ratios
-    const MAX_MAIN = w * 0.82;
-    const MAX_SMALL = w * 0.5;
+    // Helper to draw centered text with "size" from style_json + fit-to-width
+    async function drawCentered({
+      page,
+      fieldKey,
+      text,
+      posKey,
+      defaultBold,
+      fallbackColor,
+      defaultSize,
+      maxWidthPct = 0.82,
+      minSize = 10,
+      allowFit = true,
+    }) {
+      const t = (text ?? "").toString();
+      if (!t) return;
+
+      const { x, y } = posToPdf(pos?.[posKey], w, h);
+      const font = await getFont(fieldKey, defaultBold);
+      const color = colorFor(fieldKey, fallbackColor);
+
+      const maxWidth = w * maxWidthPct;
+      let size = readSize(style, fieldKey, defaultSize);
+      if (allowFit) size = fitToWidth(font, t, size, maxWidth, minSize);
+
+      const tw = font.widthOfTextAtSize(t, size);
+      page.drawText(t, { x: x - tw / 2, y, size, font, color });
+    }
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const page = pdfDoc.addPage([w, h]);
-
-      // IMPORTANT: matches preview object-fit cover
       drawBackgroundCover(page, bgImg, w, h);
 
-      // --- CERT TITLE ---
-      {
-        const text = certificateTitle;
-        const { x, y } = posToPdf(pos?.certTitle, w, h);
+      // Title
+      await drawCentered({
+        page,
+        fieldKey: "certTitle",
+        text: certificateTitle,
+        posKey: "certTitle",
+        defaultBold: true,
+        fallbackColor: "#1e2233",
+        defaultSize: 40,
+        minSize: 18,
+        maxWidthPct: 0.86,
+        allowFit: true,
+      });
 
-        const font = await getFont("certTitle", true);
-        const color = colorFor("certTitle", "#2a2a2a");
+      // Subtitle
+      await drawCentered({
+        page,
+        fieldKey: "subtitle",
+        text: subtitle,
+        posKey: "subtitle",
+        defaultBold: false,
+        fallbackColor: "#2b2f44",
+        defaultSize: 18,
+        minSize: 10,
+        maxWidthPct: 0.86,
+        allowFit: true,
+      });
 
-        const start = sizeFor(style, "certTitle", 38);
-        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(10, start * 0.4));
-        const tw = font.widthOfTextAtSize(text, size);
+      // Name
+      await drawCentered({
+        page,
+        fieldKey: "name",
+        text: row.name,
+        posKey: "name",
+        defaultBold: true,
+        fallbackColor: "#1e2233",
+        defaultSize: 32,
+        minSize: 18,
+        maxWidthPct: 0.86,
+        allowFit: true,
+      });
 
-        page.drawText(text, { x: x - tw / 2, y, size, font, color });
-      }
+      // Description
+      await drawCentered({
+        page,
+        fieldKey: "description",
+        text: description,
+        posKey: "description",
+        defaultBold: false,
+        fallbackColor: "#2b2f44",
+        defaultSize: 16,
+        minSize: 10,
+        maxWidthPct: 0.86,
+        allowFit: true,
+      });
 
-      // --- SUBTITLE ---
-      if (subtitle) {
-        const text = subtitle;
-        const { x, y } = posToPdf(pos?.subtitle, w, h);
+      // Award / Title
+      await drawCentered({
+        page,
+        fieldKey: "award",
+        text: row.award,
+        posKey: "award",
+        defaultBold: false,
+        fallbackColor: "#2b2f44",
+        defaultSize: 18,
+        minSize: 11,
+        maxWidthPct: 0.86,
+        allowFit: true,
+      });
 
-        const font = await getFont("subtitle", false);
-        const color = colorFor("subtitle", "#3a3a3a");
-
-        const start = sizeFor(style, "subtitle", 18);
-        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(10, start * 0.5));
-        const tw = font.widthOfTextAtSize(text, size);
-
-        page.drawText(text, { x: x - tw / 2, y, size, font, color });
-      }
-
-      // --- NAME ---
-      {
-        const text = row.name;
-        const { x, y } = posToPdf(pos?.name, w, h);
-
-        const font = await getFont("name", true);
-        const color = colorFor("name", "#2a2a2a");
-
-        const start = sizeFor(style, "name", 34);
-        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(12, start * 0.5));
-        const tw = font.widthOfTextAtSize(text, size);
-
-        page.drawText(text, { x: x - tw / 2, y, size, font, color });
-      }
-
-      // --- DESCRIPTION ---
-      if (description) {
-        const text = description;
-        const { x, y } = posToPdf(pos?.description, w, h);
-
-        const font = await getFont("description", false);
-        const color = colorFor("description", "#3a3a3a");
-
-        const start = sizeFor(style, "description", 16);
-        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(10, start * 0.6));
-        const tw = font.widthOfTextAtSize(text, size);
-
-        page.drawText(text, { x: x - tw / 2, y, size, font, color });
-      }
-
-      // --- AWARD / TITLE ---
-      {
-        const text = row.award;
-        const { x, y } = posToPdf(pos?.award, w, h);
-
-        const font = await getFont("award", false);
-        const color = colorFor("award", "#3a3a3a");
-
-        const start = sizeFor(style, "award", 18);
-        const size = fitTextSize(font, text, MAX_MAIN, start, Math.max(10, start * 0.6));
-        const tw = font.widthOfTextAtSize(text, size);
-
-        page.drawText(text, { x: x - tw / 2, y, size, font, color });
-      }
-
-      // --- DATE ---
+      // Date (keep your "Date: " prefix)
       {
         const effectiveDate = row.date || dateTextDefault;
         if (effectiveDate) {
-          const text = `Date: ${effectiveDate}`;
-          const { x, y } = posToPdf(pos?.date, w, h);
-
-          const font = await getFont("date", false);
-          const color = colorFor("date", "#3a3a3a");
-
-          const start = sizeFor(style, "date", 12);
-          const size = fitTextSize(font, text, MAX_SMALL, start, 9);
-          const tw = font.widthOfTextAtSize(text, size);
-
-          page.drawText(text, { x: x - tw / 2, y, size, font, color });
+          await drawCentered({
+            page,
+            fieldKey: "date",
+            text: `Date: ${effectiveDate}`,
+            posKey: "date",
+            defaultBold: false,
+            fallbackColor: "#2b2f44",
+            defaultSize: 12,
+            minSize: 9,
+            maxWidthPct: 0.40, // date usually smaller area; adjust if you want
+            allowFit: true,
+          });
         }
       }
 
-      // --- ISSUER ---
+      // Issuer
       {
         const effectiveIssuer = row.issuer || issuerDefault;
         if (effectiveIssuer) {
-          const text = effectiveIssuer;
-          const { x, y } = posToPdf(pos?.issuer, w, h);
-
-          const font = await getFont("issuer", true);
-          const color = colorFor("issuer", "#2a2a2a");
-
-          const start = sizeFor(style, "issuer", 14);
-          const size = fitTextSize(font, text, MAX_SMALL, start, 10);
-          const tw = font.widthOfTextAtSize(text, size);
-
-          page.drawText(text, { x: x - tw / 2, y, size, font, color });
+          await drawCentered({
+            page,
+            fieldKey: "issuer",
+            text: effectiveIssuer,
+            posKey: "issuer",
+            defaultBold: true,
+            fallbackColor: "#1e2233",
+            defaultSize: 14,
+            minSize: 10,
+            maxWidthPct: 0.45,
+            allowFit: true,
+          });
         }
       }
 
-      // Watermark
+      // Watermark (preview)
       page.drawText("PREVIEW — UPGRADE TO REMOVE WATERMARK", {
         x: 40,
         y: h * 0.35,
@@ -382,4 +413,3 @@ export async function onRequestPost({ request, env }) {
     });
   }
 }
-
