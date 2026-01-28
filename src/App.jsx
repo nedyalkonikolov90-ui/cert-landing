@@ -47,12 +47,22 @@ function parseCsv(text) {
 
 // TXT: "Name - Title"
 function parseTxt(text) {
-  const lines = text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   if (lines.length === 0) return { error: "TXT must include at least 1 line." };
   const rows = [];
   for (const line of lines) {
     const parts = line.split(" - ");
-    if (parts.length >= 2) rows.push({ name: parts[0].trim(), award: parts.slice(1).join(" - ").trim(), date: "", issuer: "" });
+    if (parts.length >= 2)
+      rows.push({
+        name: parts[0].trim(),
+        award: parts.slice(1).join(" - ").trim(),
+        date: "",
+        issuer: "",
+      });
   }
   if (rows.length === 0) return { error: 'TXT lines must be like: "Name - Title"' };
   return { rows };
@@ -337,7 +347,6 @@ export default function App() {
         const data = await res.json();
         if (!alive) return;
         setTemplates(data.templates || []);
-        // auto select first template
         if ((data.templates || []).length > 0) setTemplateKey((data.templates || [])[0].key);
       } catch (e) {
         if (!alive) return;
@@ -413,13 +422,7 @@ export default function App() {
     setEditingId(id);
     setEditorValue(text);
 
-    const absPos = node.getAbsolutePosition();
-    const scale = stage.scaleX(); // usually 1
     const box = node.getClientRect({ relativeTo: stage });
-
-    const containerRect = container.getBoundingClientRect();
-    // Stage is fixed size; we draw 1:1, and we scale container via CSS (responsive).
-    // We compute overlay rect by using the rendered canvas bounding box:
     const canvasEl = container.querySelector("canvas");
     const canvasRect = canvasEl.getBoundingClientRect();
 
@@ -431,21 +434,18 @@ export default function App() {
       top: canvasRect.top + box.y * sy,
       width: box.width * sx,
       height: box.height * sy,
-      containerLeft: containerRect.left,
-      containerTop: containerRect.top,
     });
   }
 
   function closeEditor() {
     if (!editingId) return;
     updateField(editingId, { text: editorValue });
-    // sync back to form fields when editing special fields
+
     if (editingId === "certTitle") setCertTitle(editorValue);
     if (editingId === "subtitle") setSubtitle(editorValue);
     if (editingId === "description") setDescription(editorValue);
     if (editingId === "issuer") setIssuerText(editorValue);
     if (editingId === "date") {
-      // allow editing date line directly; try to parse "Date: X"
       const m = editorValue.match(/date:\s*(.*)$/i);
       if (m?.[1]) setDateText(m[1].trim());
     }
@@ -456,10 +456,49 @@ export default function App() {
     setEditorRect(null);
   }
 
-  // Export: Build PDF client-side from EXACT stage render(s) => pixel-perfect
+  /**
+   * Snapshot stage WITHOUT editor tools (Transformer handles/box).
+   * This is the key fix for “PDF exports include editor tools”.
+   */
+  async function snapshotStagePngBytes() {
+    const stage = stageRef.current;
+    if (!stage) throw new Error("Stage not ready");
+
+    // Close inline editor if open (textarea overlay is HTML, not in canvas, but keep UX clean)
+    if (editingId) closeEditor();
+
+    const tr = transformerRef.current;
+    const prevSelected = selectedId;
+
+    // Hide transformer + clear nodes so it doesn't render in snapshot
+    if (tr) {
+      tr.nodes([]);
+      tr.visible(false);
+      tr.getLayer()?.batchDraw();
+    }
+
+    // Also clear selection state so nothing re-attaches immediately
+    setSelectedId("");
+    await new Promise((r) => setTimeout(r, 30));
+
+    const dataUrl = stage.toDataURL({ pixelRatio: 2 });
+    const bytes = await (await fetch(dataUrl)).arrayBuffer();
+
+    // Restore
+    if (tr) {
+      tr.visible(true);
+      tr.getLayer()?.batchDraw();
+    }
+    setSelectedId(prevSelected);
+
+    return bytes;
+  }
+
+  // Export: Build PDF client-side from EXACT stage render(s) => pixel-perfect, WITHOUT editor tools
   async function exportPdfPreview() {
     setError("");
     if (!selectedTemplate) return setError("No template selected.");
+
     const effectiveRows =
       inputMode === "manual"
         ? [{ name: manualName, award: manualAward, date: dateText, issuer: issuerText }]
@@ -487,12 +526,9 @@ export default function App() {
           })
         );
 
-        // Wait a tick so Konva redraws before snapshot
         await new Promise((res) => setTimeout(res, 30));
 
-        const stage = stageRef.current;
-        const dataUrl = stage.toDataURL({ pixelRatio: 2 }); // crisp
-        const pngBytes = await (await fetch(dataUrl)).arrayBuffer();
+        const pngBytes = await snapshotStagePngBytes();
 
         const page = pdfDoc.addPage([CW, CH]);
         const img = await pdfDoc.embedPng(pngBytes);
@@ -530,10 +566,11 @@ export default function App() {
     }
   }
 
-  // Optional: ZIP PNGs (useful for batch)
+  // Optional: ZIP PNGs (useful for batch) WITHOUT editor tools
   async function exportPngZipPreview() {
     setError("");
     if (!selectedTemplate) return setError("No template selected.");
+
     const effectiveRows =
       inputMode === "manual"
         ? [{ name: manualName, award: manualAward, date: dateText, issuer: issuerText }]
@@ -562,9 +599,7 @@ export default function App() {
 
         await new Promise((res) => setTimeout(res, 30));
 
-        const stage = stageRef.current;
-        const dataUrl = stage.toDataURL({ pixelRatio: 2 });
-        const bin = await (await fetch(dataUrl)).arrayBuffer();
+        const bin = await snapshotStagePngBytes();
         zip.file(`certificate_${i + 1}.png`, bin);
       }
 
@@ -653,7 +688,11 @@ export default function App() {
                 CSV headers: <code>name,title</code> (optional <code>date</code>, <code>issuer</code>) • TXT:{" "}
                 <code>Name - Title</code>
               </div>
-              {uploadFile && rows.length > 0 && <div style={styles.help}><b>Rows:</b> {rows.length} (preview shows first)</div>}
+              {uploadFile && rows.length > 0 && (
+                <div style={styles.help}>
+                  <b>Rows:</b> {rows.length} (preview shows first)
+                </div>
+              )}
             </div>
           )}
 
@@ -699,7 +738,12 @@ export default function App() {
 
           <div style={styles.block}>
             <label style={styles.label}>Free text (below title)</label>
-            <input style={styles.input} value={subtitle} onChange={(e) => setSubtitle(e.target.value)} placeholder="(optional)" />
+            <input
+              style={styles.input}
+              value={subtitle}
+              onChange={(e) => setSubtitle(e.target.value)}
+              placeholder="(optional)"
+            />
           </div>
 
           <div style={styles.block}>
@@ -778,9 +822,12 @@ export default function App() {
                       onDblTap={() => openEditorFor(f.id)}
                       onDragEnd={(e) => {
                         const node = e.target;
-                        // keep y as top-left; store x as "anchor point"
                         const newX =
-                          f.align === "center" ? node.x() + f.width / 2 : f.align === "right" ? node.x() + f.width : node.x();
+                          f.align === "center"
+                            ? node.x() + f.width / 2
+                            : f.align === "right"
+                            ? node.x() + f.width
+                            : node.x();
                         updateField(f.id, { x: newX, y: node.y() });
                       }}
                       onTransformEnd={(e) => {
@@ -789,17 +836,18 @@ export default function App() {
                         const scaleX = node.scaleX();
                         const scaleY = node.scaleY();
 
-                        // Width resize using scaleX
                         const nextWidth = Math.max(120, f.width * scaleX);
-
-                        // Font size resize using scaleY (vertical handles)
                         const nextFontSize = clamp(f.fontSize * scaleY, 10, 120);
 
                         node.scaleX(1);
                         node.scaleY(1);
 
                         const nx =
-                          f.align === "center" ? node.x() + nextWidth / 2 : f.align === "right" ? node.x() + nextWidth : node.x();
+                          f.align === "center"
+                            ? node.x() + nextWidth / 2
+                            : f.align === "right"
+                            ? node.x() + nextWidth
+                            : node.x();
 
                         updateField(f.id, {
                           x: nx,
@@ -816,16 +864,8 @@ export default function App() {
                   <Transformer
                     ref={transformerRef}
                     rotateEnabled={false}
-                    enabledAnchors={[
-                      "middle-left",
-                      "middle-right",
-                      "top-left",
-                      "top-right",
-                      "bottom-left",
-                      "bottom-right",
-                    ]}
+                    enabledAnchors={["middle-left", "middle-right", "top-left", "top-right", "bottom-left", "bottom-right"]}
                     boundBoxFunc={(oldBox, newBox) => {
-                      // Prevent flipping / too small
                       if (newBox.width < 120) return oldBox;
                       if (newBox.height < 20) return oldBox;
                       return newBox;
@@ -933,9 +973,7 @@ export default function App() {
                   onChange={(e) => updateField(selectedField.id, { fontSize: Number(e.target.value) })}
                   style={{ width: "100%" }}
                 />
-                <div style={styles.help}>
-                  {selectedField.fontSize}px • Resize handles also work (width + size)
-                </div>
+                <div style={styles.help}>{selectedField.fontSize}px • Resize handles also work (width + size)</div>
               </div>
 
               <div style={styles.block}>
@@ -954,11 +992,19 @@ export default function App() {
               <button
                 style={styles.btnGhost}
                 onClick={() => {
-                  // reset selected field style only
                   updateField(selectedField.id, {
                     fontFamily: "Inter",
-                    fontStyle: selectedField.id === "certTitle" || selectedField.id === "name" || selectedField.id === "issuer" ? "bold" : "normal",
-                    fill: selectedField.id === "award" || selectedField.id === "subtitle" || selectedField.id === "description" || selectedField.id === "date" ? "#2b2f44" : "#1e2233",
+                    fontStyle:
+                      selectedField.id === "certTitle" || selectedField.id === "name" || selectedField.id === "issuer"
+                        ? "bold"
+                        : "normal",
+                    fill:
+                      selectedField.id === "award" ||
+                      selectedField.id === "subtitle" ||
+                      selectedField.id === "description" ||
+                      selectedField.id === "date"
+                        ? "#2b2f44"
+                        : "#1e2233",
                   });
                 }}
               >
@@ -969,7 +1015,7 @@ export default function App() {
 
           <div style={styles.hr} />
           <div style={styles.help}>
-            Export is <b>pixel-perfect</b> because PDF is created from the same canvas render.
+            Export is <b>pixel-perfect</b> because PDF/PNGs are created from the same canvas render — <b>without</b> editor tools.
           </div>
         </div>
       </div>
