@@ -1,18 +1,20 @@
 // src/App.jsx
+// src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * Modern UI + Canvas editor
- * - Templates loaded from /api/templates (R2)
- * - Preview image loaded from /api/template?key=...
- * - Click-to-select fields
- * - Drag to move (when not editing)
- * - Double-click or ✏️ to edit text
- * - Right-side inspector for selected field (font/color/size/weight)
- * - Still supports manual or upload CSV/TXT
+ * Certifyly Editor (Modern UI + Click-select + Drag + Resize handles + Inline edit)
  *
- * NOTE: This is UI-focused. It keeps your current PDF pipeline:
- * - POST /api/preview with template_key, pos_json, style_json, etc.
+ * Assumes you have:
+ *  - GET  /api/templates         -> { templates: [{ id, key, label }] }
+ *  - GET  /api/template?key=...  -> returns the image bytes (png/jpg) from R2
+ *  - POST /api/preview           -> generates PDF (your preview.js)
+ *
+ * IMPORTANT for "PDF exactly like live preview":
+ *  - This UI uses fontSize in *pt* in the live preview (CSS "pt"),
+ *    and sends the same numeric "size" to preview.js (pt).
+ *  - preview.js should read style[field].size and use it directly (like the version I pasted).
+ *  - Built-in PDF fonts only support regular/bold; we map weight>=700 to bold in PDF.
  */
 
 const FONT_OPTIONS = [
@@ -21,19 +23,17 @@ const FONT_OPTIONS = [
   { id: "courier", label: "Courier" },
 ];
 
+const FIELD_ORDER = ["certTitle", "subtitle", "name", "description", "award", "date", "issuer"];
+
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-function fontFamilyFor(fontId) {
-  switch ((fontId || "").toLowerCase()) {
-    case "times":
-      return '"Times New Roman", Times, serif';
-    case "courier":
-      return '"Courier New", Courier, monospace';
-    case "helvetica":
-    default:
-      return "Arial, Helvetica, sans-serif";
+function safeJsonParse(str, fallback) {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return fallback;
   }
 }
 
@@ -79,173 +79,16 @@ function parseTxt(text) {
   return { rows };
 }
 
-/** Canvas Field (click-to-select, drag-to-move, dblclick-to-edit) */
-function CanvasField({
-  fieldKey,
-  text,
-  pos,
-  selected,
-  onSelect,
-  onPosChange,
-  onTextChange,
-  style,
-  previewBoxRef,
-}) {
-  const [dragging, setDragging] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const elRef = useRef(null);
-
-  function pointerToPercent(clientX, clientY) {
-    const box = previewBoxRef.current;
-    if (!box) return null;
-    const rect = box.getBoundingClientRect();
-    const px = (clientX - rect.left) / rect.width;
-    const py = (clientY - rect.top) / rect.height;
-    return { x: clamp(px, 0, 1), y: clamp(py, 0, 1) };
-  }
-
-  function startEditing() {
-    setEditing(true);
-    requestAnimationFrame(() => {
-      const el = elRef.current;
-      if (!el) return;
-      el.focus();
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      range.collapse(false);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-    });
-  }
-
-  function stopEditing(save = true) {
-    setEditing(false);
-    const el = elRef.current;
-    if (!el) return;
-    if (save) onTextChange(fieldKey, (el.innerText ?? "").toString().replace(/\r/g, ""));
-    else el.innerText = text || "";
-  }
-
-  function onDown(e) {
-    onSelect(fieldKey);
-    if (editing) return;
-    // allow clicking the edit button without starting drag
-    if (e.target?.dataset?.role === "editbtn") return;
-    e.preventDefault();
-    setDragging(true);
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-  }
-
-  function onMove(e) {
-    if (!dragging) return;
-    const p = pointerToPercent(e.clientX, e.clientY);
-    if (p) onPosChange(fieldKey, p);
-  }
-
-  function onUp() {
-    setDragging(false);
-  }
-
-  return (
-    <div
-      onPointerDown={onDown}
-      onPointerMove={onMove}
-      onPointerUp={onUp}
-      onPointerLeave={onUp}
-      onDoubleClick={(e) => {
-        e.preventDefault();
-        startEditing();
-      }}
-      style={{
-        position: "absolute",
-        left: `${pos.x * 100}%`,
-        top: `${pos.y * 100}%`,
-        transform: "translate(-50%, -50%)",
-        cursor: editing ? "text" : dragging ? "grabbing" : "grab",
-        padding: "8px 10px",
-        borderRadius: 12,
-        background: selected
-          ? "rgba(255,255,255,0.72)"
-          : "rgba(255,255,255,0.18)",
-        border: selected
-          ? "1px solid rgba(120, 140, 255, 0.55)"
-          : "1px dashed rgba(255,255,255,0.35)",
-        boxShadow: selected ? "0 12px 28px rgba(0,0,0,0.12)" : "none",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
-        userSelect: editing ? "text" : "none",
-        touchAction: "none",
-        whiteSpace: "nowrap",
-        maxWidth: "92%",
-        ...style,
-      }}
-      title={editing ? "Editing… click outside to save" : "Click to select • Drag to move • Double-click to edit"}
-    >
-      <div
-        ref={elRef}
-        contentEditable={editing}
-        suppressContentEditableWarning
-        spellCheck={false}
-        onBlur={() => stopEditing(true)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            elRef.current?.blur();
-          }
-          if (e.key === "Escape") {
-            e.preventDefault();
-            stopEditing(false);
-          }
-        }}
-        style={{
-          outline: "none",
-          pointerEvents: editing ? "auto" : "none",
-        }}
-      >
-        {text || " "}
-      </div>
-
-      {!editing && (
-        <button
-          type="button"
-          data-role="editbtn"
-          onClick={(e) => {
-            e.stopPropagation();
-            startEditing();
-          }}
-          style={{
-            marginLeft: 10,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "4px 8px",
-            borderRadius: 10,
-            border: "1px solid rgba(0,0,0,0.08)",
-            background: selected ? "rgba(120,140,255,0.12)" : "rgba(255,255,255,0.5)",
-            cursor: "pointer",
-            fontSize: 12,
-            color: "rgba(20,20,30,0.9)",
-          }}
-          title="Edit"
-        >
-          ✏️ <span style={{ opacity: 0.75 }}>Edit</span>
-        </button>
-      )}
-    </div>
-  );
-}
-
 function prettyFieldName(k) {
   switch (k) {
     case "certTitle":
       return "Certificate Title";
     case "subtitle":
-      return "Subtitle (under title)";
+      return "Subtitle";
     case "name":
       return "Name";
     case "description":
-      return "Description (under name)";
+      return "Description";
     case "award":
       return "Award / Title";
     case "date":
@@ -257,63 +100,310 @@ function prettyFieldName(k) {
   }
 }
 
-export default function App() {
-  const [error, setError] = useState("");
+// Map our 3 font options to browser fonts (approx).
+// PDF uses StandardFonts; the goal is *close* visual match + same size/position.
+function fontFamilyFor(fontId) {
+  const id = (fontId || "helvetica").toLowerCase();
+  if (id === "times") return '"Times New Roman", Times, serif';
+  if (id === "courier") return '"Courier New", Courier, monospace';
+  return "Arial, Helvetica, sans-serif";
+}
 
-  // templates from R2
+function defaultState() {
+  return {
+    // positions in normalized (0..1) relative to preview box
+    pos: {
+      certTitle: { x: 0.5, y: 0.18 },
+      subtitle: { x: 0.5, y: 0.26 },
+      name: { x: 0.5, y: 0.42 },
+      description: { x: 0.5, y: 0.48 },
+      award: { x: 0.5, y: 0.54 },
+      date: { x: 0.12, y: 0.92 },
+      issuer: { x: 0.84, y: 0.88 },
+    },
+    // style used by BOTH preview + PDF (size is PT!)
+    styleByField: {
+      certTitle: { font: "helvetica", color: "#1e2233", size: 40, weight: 800 },
+      subtitle: { font: "helvetica", color: "#2b2f44", size: 18, weight: 500 },
+      name: { font: "helvetica", color: "#1e2233", size: 32, weight: 800 },
+      description: { font: "helvetica", color: "#2b2f44", size: 16, weight: 400 },
+      award: { font: "helvetica", color: "#2b2f44", size: 18, weight: 600 },
+      date: { font: "helvetica", color: "#2b2f44", size: 12, weight: 600 },
+      issuer: { font: "helvetica", color: "#1e2233", size: 14, weight: 700 },
+    },
+  };
+}
+
+/**
+ * CanvasText
+ * - click to select
+ * - drag to move (when not editing / not resizing)
+ * - double-click to edit inline
+ * - resize handles (4 corners) change font size (pt)
+ * - no blur, no edit button
+ */
+function CanvasText({
+  fieldKey,
+  text,
+  pos,
+  style,
+  selected,
+  onSelect,
+  onPosChange,
+  onTextChange,
+  onStyleChange,
+  previewBoxRef,
+}) {
+  const elRef = useRef(null);
+  const wrapRef = useRef(null);
+
+  const [mode, setMode] = useState("idle"); // idle | drag | edit | resize
+  const [resizeStart, setResizeStart] = useState(null);
+
+  function pointerToPercent(clientX, clientY) {
+    const box = previewBoxRef.current;
+    if (!box) return null;
+    const rect = box.getBoundingClientRect();
+    const px = (clientX - rect.left) / rect.width;
+    const py = (clientY - rect.top) / rect.height;
+    return { x: clamp(px, 0, 1), y: clamp(py, 0, 1) };
+  }
+
+  function startEditing() {
+    setMode("edit");
+    requestAnimationFrame(() => {
+      const el = elRef.current;
+      if (!el) return;
+      el.focus();
+      // caret to end
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    });
+  }
+
+  function stopEditing(save) {
+    const el = elRef.current;
+    if (!el) {
+      setMode("idle");
+      return;
+    }
+    if (save) {
+      const v = (el.innerText ?? "").toString().replace(/\r/g, "");
+      onTextChange(fieldKey, v);
+    } else {
+      el.innerText = text || "";
+    }
+    setMode("idle");
+  }
+
+  function onPointerDown(e) {
+    // select always
+    onSelect(fieldKey);
+
+    // if clicking a resize handle, let handle code manage
+    if (e.target?.dataset?.handle) return;
+
+    // start drag unless editing
+    if (mode === "edit") return;
+
+    e.preventDefault();
+    setMode("drag");
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+
+  function onPointerMove(e) {
+    if (mode !== "drag") return;
+    const p = pointerToPercent(e.clientX, e.clientY);
+    if (p) onPosChange(fieldKey, p);
+  }
+
+  function onPointerUp() {
+    if (mode === "drag") setMode("idle");
+  }
+
+  function beginResize(handle, e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+
+    const rect = wrap.getBoundingClientRect();
+    setResizeStart({
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      startSize: Number(style?.size ?? 18),
+      // use diagonal movement relative to element size for stable feel
+      elementW: rect.width || 1,
+      elementH: rect.height || 1,
+    });
+
+    setMode("resize");
+    wrap.setPointerCapture?.(e.pointerId);
+  }
+
+  function onResizeMove(e) {
+    if (mode !== "resize" || !resizeStart) return;
+
+    const dx = e.clientX - resizeStart.startX;
+    const dy = e.clientY - resizeStart.startY;
+
+    // convert movement into size delta (pt)
+    // use diagonal direction so any corner feels similar
+    const diag = Math.sqrt(resizeStart.elementW ** 2 + resizeStart.elementH ** 2) || 1;
+    const move = (dx - dy) / diag; // drag down-right increases a bit; up-left decreases
+    const deltaPt = move * 80; // sensitivity
+
+    const nextSize = clamp(resizeStart.startSize + deltaPt, 8, 120);
+    onStyleChange(fieldKey, { size: Math.round(nextSize) });
+  }
+
+  function endResize() {
+    if (mode === "resize") {
+      setMode("idle");
+      setResizeStart(null);
+    }
+  }
+
+  const isEditing = mode === "edit";
+
+  return (
+    <div
+      ref={wrapRef}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerLeave={onPointerUp}
+      onDoubleClick={(e) => {
+        e.preventDefault();
+        startEditing();
+      }}
+      style={{
+        position: "absolute",
+        left: `${pos.x * 100}%`,
+        top: `${pos.y * 100}%`,
+        transform: "translate(-50%, -50%)",
+        cursor: isEditing ? "text" : mode === "drag" ? "grabbing" : "grab",
+        padding: "4px 6px",
+        borderRadius: 6,
+        border: selected ? "1px solid rgba(91,124,255,0.9)" : "1px solid transparent",
+        background: "transparent",
+        userSelect: isEditing ? "text" : "none",
+        whiteSpace: "nowrap",
+        zIndex: selected ? 10 : 2,
+      }}
+    >
+      {/* Text node */}
+      <div
+        ref={elRef}
+        contentEditable={isEditing}
+        suppressContentEditableWarning
+        spellCheck={false}
+        onBlur={() => stopEditing(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            // Save on Enter (single line)
+            e.preventDefault();
+            elRef.current?.blur();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            stopEditing(false);
+          }
+        }}
+        style={{
+          outline: "none",
+          pointerEvents: isEditing ? "auto" : "none",
+          ...style,
+        }}
+      >
+        {text || " "}
+      </div>
+
+      {/* Resize handles (only when selected and not editing) */}
+      {selected && !isEditing && (
+        <>
+          {["nw", "ne", "sw", "se"].map((h) => (
+            <div
+              key={h}
+              data-handle={h}
+              onPointerDown={(e) => beginResize(h, e)}
+              onPointerMove={onResizeMove}
+              onPointerUp={endResize}
+              onPointerLeave={endResize}
+              style={{
+                position: "absolute",
+                width: 10,
+                height: 10,
+                borderRadius: 3,
+                background: "rgba(91,124,255,0.95)",
+                border: "1px solid rgba(255,255,255,0.75)",
+                boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
+                cursor:
+                  h === "nw" || h === "se"
+                    ? "nwse-resize"
+                    : "nesw-resize",
+                left: h.includes("w") ? -6 : "auto",
+                right: h.includes("e") ? -6 : "auto",
+                top: h.includes("n") ? -6 : "auto",
+                bottom: h.includes("s") ? -6 : "auto",
+              }}
+              title="Drag to resize"
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+export default function App() {
+  // templates
   const [templates, setTemplates] = useState([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
+
   const [templateId, setTemplateId] = useState("");
-  const selectedTemplate = useMemo(() => templates.find((t) => t.id === templateId) || null, [templates, templateId]);
+  const selectedTemplate = useMemo(
+    () => templates.find((t) => t.id === templateId) || null,
+    [templates, templateId]
+  );
   const templateKey = selectedTemplate?.key || "";
   const previewImageUrl = templateKey ? `/api/template?key=${encodeURIComponent(templateKey)}` : "";
 
-  // input mode + data
-  const [inputMode, setInputMode] = useState("manual"); // manual | upload
+  // input mode
+  const [inputMode, setInputMode] = useState("manual");
   const [uploadFile, setUploadFile] = useState(null);
   const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
 
-  const [manualName, setManualName] = useState("Student Name");
-  const [manualAward, setManualAward] = useState("For outstanding performance");
-
+  // generator settings
   const [paper, setPaper] = useState("A4");
   const [busy, setBusy] = useState(false);
 
-  // on-canvas text fields
+  // text fields
   const [certTitle, setCertTitle] = useState("Certificate of Achievement");
   const [subtitle, setSubtitle] = useState("Presented to");
+  const [manualName, setManualName] = useState("Student Name");
   const [description, setDescription] = useState("For outstanding effort and dedication");
+  const [manualAward, setManualAward] = useState("For outstanding performance");
   const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
   const [issuer, setIssuer] = useState("Issuer / Organization");
 
-  // selection + inspector
-  const FIELD_KEYS = useMemo(() => ["certTitle", "subtitle", "name", "description", "award", "date", "issuer"], []);
+  // editor state
+  const { pos: defaultPos, styleByField: defaultStyles } = useMemo(defaultState, []);
+  const [pos, setPos] = useState(defaultPos);
+  const [styleByField, setStyleByField] = useState(defaultStyles);
   const [selectedKey, setSelectedKey] = useState("certTitle");
 
-  // positions (normalized 0..1)
-  const [pos, setPos] = useState({
-    certTitle: { x: 0.5, y: 0.18 },
-    subtitle: { x: 0.5, y: 0.26 },
-    name: { x: 0.5, y: 0.42 },
-    description: { x: 0.5, y: 0.48 },
-    award: { x: 0.5, y: 0.54 },
-    date: { x: 0.10, y: 0.92 },
-    issuer: { x: 0.80, y: 0.88 },
-  });
-
-  // style per field
-  const [styleByField, setStyleByField] = useState({
-    certTitle: { font: "helvetica", color: "#1e2233", size: 40, weight: 800 },
-    subtitle: { font: "helvetica", color: "#2b2f44", size: 18, weight: 500 },
-    name: { font: "helvetica", color: "#1e2233", size: 32, weight: 800 },
-    description: { font: "helvetica", color: "#2b2f44", size: 16, weight: 400 },
-    award: { font: "helvetica", color: "#2b2f44", size: 18, weight: 600 },
-    date: { font: "helvetica", color: "#2b2f44", size: 12, weight: 600 },
-    issuer: { font: "helvetica", color: "#1e2233", size: 14, weight: 700 },
-  });
-
+  // canvas ref
   const previewBoxRef = useRef(null);
 
+  // Load templates from backend
   useEffect(() => {
     (async () => {
       setError("");
@@ -334,27 +424,28 @@ export default function App() {
   }, []);
 
   const sampleRow = useMemo(() => {
-    if (inputMode === "manual") return { name: manualName, award: manualAward, date: dateText, issuer };
-    return rows[0] || { name: "Student Name", award: "For outstanding performance", date: dateText, issuer };
+    if (inputMode === "manual") {
+      return { name: manualName, award: manualAward, date: dateText, issuer };
+    }
+    return rows[0] || { name: manualName, award: manualAward, date: dateText, issuer };
   }, [inputMode, manualName, manualAward, rows, dateText, issuer]);
 
-  function updatePos(fieldKey, newPos) {
+  function onPosChange(fieldKey, newPos) {
     setPos((p) => ({ ...p, [fieldKey]: newPos }));
   }
 
-  function updateStyle(fieldKey, patch) {
+  function onStyleChange(fieldKey, patch) {
     setStyleByField((s) => ({ ...s, [fieldKey]: { ...s[fieldKey], ...patch } }));
   }
 
-  function updateText(fieldKey, value) {
+  function onTextChange(fieldKey, value) {
     const v = (value ?? "").toString().replace(/\r/g, "");
+
     if (fieldKey === "certTitle") setCertTitle(v);
     if (fieldKey === "subtitle") setSubtitle(v);
-    if (fieldKey === "description") setDescription(v);
-
     if (fieldKey === "name") setManualName(v);
+    if (fieldKey === "description") setDescription(v);
     if (fieldKey === "award") setManualAward(v);
-
     if (fieldKey === "date") setDateText(v.replace(/^Date:\s*/i, "").trim());
     if (fieldKey === "issuer") setIssuer(v);
   }
@@ -363,6 +454,7 @@ export default function App() {
     setUploadFile(file);
     setError("");
     const text = await file.text();
+
     let parsed;
     if (file.name.toLowerCase().endsWith(".csv")) parsed = parseCsv(text);
     else if (file.name.toLowerCase().endsWith(".txt")) parsed = parseTxt(text);
@@ -374,6 +466,17 @@ export default function App() {
     } else {
       setRows(parsed.rows);
     }
+  }
+
+  function getFieldText(fieldKey) {
+    if (fieldKey === "certTitle") return certTitle;
+    if (fieldKey === "subtitle") return subtitle;
+    if (fieldKey === "name") return sampleRow.name;
+    if (fieldKey === "description") return description;
+    if (fieldKey === "award") return sampleRow.award;
+    if (fieldKey === "date") return dateText ? `Date: ${dateText}` : "Date: ____-__-__";
+    if (fieldKey === "issuer") return issuer || "Issuer / Organization";
+    return "";
   }
 
   async function generatePreviewPdf() {
@@ -390,21 +493,23 @@ export default function App() {
     setBusy(true);
     try {
       const form = new FormData();
+
+      // data rows
       form.append("rows_json", JSON.stringify(effectiveRows));
+
+      // template + paper
       form.append("template_key", templateKey);
       form.append("paper_size", paper);
 
+      // text content
       form.append("certificate_title", certTitle);
       form.append("subtitle", subtitle);
       form.append("description", description);
-
       form.append("date_text", dateText);
       form.append("issuer", issuer);
 
+      // positions and style (includes size/weight/font/color)
       form.append("pos_json", JSON.stringify(pos));
-
-      // Send style_json – keep only what backend expects (font + color).
-      // If your backend also supports size/weight later, keep them too.
       form.append("style_json", JSON.stringify(styleByField));
 
       const res = await fetch("/api/preview", { method: "POST", body: form });
@@ -412,6 +517,7 @@ export default function App() {
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
+
       const a = document.createElement("a");
       a.href = url;
       a.download = "certificate_preview.pdf";
@@ -426,326 +532,246 @@ export default function App() {
     }
   }
 
-  const inspectorStyle = styleByField[selectedKey] || styleByField.certTitle;
+  const inspector = styleByField[selectedKey] || styleByField.certTitle;
 
-  function getFieldText(fieldKey) {
-    if (fieldKey === "certTitle") return certTitle;
-    if (fieldKey === "subtitle") return subtitle;
-    if (fieldKey === "description") return description;
-
-    if (fieldKey === "name") return sampleRow.name;
-    if (fieldKey === "award") return sampleRow.award;
-    if (fieldKey === "date") return dateText ? `Date: ${dateText}` : "Date: ____-__-__";
-    if (fieldKey === "issuer") return issuer || "Issuer / Organization";
-    return "";
+  // Build live styles — IMPORTANT: use pt so PDF and Preview share the same unit
+  function liveStyleFor(fieldKey) {
+    const s = styleByField[fieldKey] || {};
+    return {
+      fontFamily: fontFamilyFor(s.font),
+      fontWeight: s.weight ?? 600,
+      fontSize: `${Number(s.size ?? 16)}pt`,
+      color: s.color || "#111",
+      lineHeight: 1.1,
+      letterSpacing: "0px",
+    };
   }
 
-  const canvasFields = [
-    {
-      key: "certTitle",
-      text: certTitle,
-      style: {
-        fontFamily: fontFamilyFor(styleByField.certTitle.font),
-        fontWeight: styleByField.certTitle.weight ?? 800,
-        fontSize: `clamp(18px, 3.2vw, ${styleByField.certTitle.size ?? 42}px)`,
-        color: styleByField.certTitle.color,
-      },
-    },
-    {
-      key: "subtitle",
-      text: subtitle,
-      style: {
-        fontFamily: fontFamilyFor(styleByField.subtitle.font),
-        fontWeight: styleByField.subtitle.weight ?? 500,
-        fontSize: `clamp(12px, 1.8vw, ${styleByField.subtitle.size ?? 20}px)`,
-        color: styleByField.subtitle.color,
-      },
-    },
-    {
-      key: "name",
-      text: sampleRow.name,
-      style: {
-        fontFamily: fontFamilyFor(styleByField.name.font),
-        fontWeight: styleByField.name.weight ?? 800,
-        fontSize: `clamp(14px, 2.6vw, ${styleByField.name.size ?? 30}px)`,
-        color: styleByField.name.color,
-      },
-    },
-    {
-      key: "description",
-      text: description,
-      style: {
-        fontFamily: fontFamilyFor(styleByField.description.font),
-        fontWeight: styleByField.description.weight ?? 400,
-        fontSize: `clamp(12px, 1.6vw, ${styleByField.description.size ?? 18}px)`,
-        color: styleByField.description.color,
-      },
-    },
-    {
-      key: "award",
-      text: sampleRow.award,
-      style: {
-        fontFamily: fontFamilyFor(styleByField.award.font),
-        fontWeight: styleByField.award.weight ?? 600,
-        fontSize: `clamp(12px, 1.6vw, ${styleByField.award.size ?? 18}px)`,
-        color: styleByField.award.color,
-      },
-    },
-    {
-      key: "date",
-      text: dateText ? `Date: ${dateText}` : "Date: ____-__-__",
-      style: {
-        fontFamily: fontFamilyFor(styleByField.date.font),
-        fontWeight: styleByField.date.weight ?? 600,
-        fontSize: `clamp(10px, 1.2vw, ${styleByField.date.size ?? 14}px)`,
-        color: styleByField.date.color,
-      },
-    },
-    {
-      key: "issuer",
-      text: issuer || "Issuer / Organization",
-      style: {
-        fontFamily: fontFamilyFor(styleByField.issuer.font),
-        fontWeight: styleByField.issuer.weight ?? 700,
-        fontSize: `clamp(10px, 1.3vw, ${styleByField.issuer.size ?? 16}px)`,
-        color: styleByField.issuer.color,
-      },
-    },
-  ];
+  const fields = useMemo(
+    () =>
+      FIELD_ORDER.map((k) => ({
+        key: k,
+        text: getFieldText(k),
+        pos: pos[k],
+        style: liveStyleFor(k),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [certTitle, subtitle, manualName, description, manualAward, dateText, issuer, inputMode, rows, pos, styleByField]
+  );
+
+  // ===== Modern UI CSS (no blur in preview; clean editor) =====
+  const css = `
+    :root{
+      --bg0:#070a14;
+      --bg1:#0a1030;
+      --bg2:#0b153a;
+      --card: rgba(255,255,255,0.07);
+      --stroke: rgba(255,255,255,0.12);
+      --stroke2: rgba(255,255,255,0.18);
+      --text: rgba(255,255,255,0.92);
+      --muted: rgba(255,255,255,0.64);
+      --muted2: rgba(255,255,255,0.48);
+      --accent:#5b7cff;
+      --accent2:#52e0c4;
+      --danger:#ff5c7a;
+      --shadow: 0 18px 55px rgba(0,0,0,0.40);
+      --shadow2: 0 10px 30px rgba(0,0,0,0.35);
+      --radius: 18px;
+    }
+
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background:
+        radial-gradient(900px 600px at 15% -10%, rgba(91,124,255,0.30), transparent 60%),
+        radial-gradient(900px 600px at 85% -5%, rgba(82,224,196,0.20), transparent 60%),
+        radial-gradient(900px 650px at 50% 110%, rgba(255,92,122,0.12), transparent 60%),
+        linear-gradient(180deg, var(--bg0), var(--bg1) 40%, var(--bg2));
+      min-height: 100vh;
+    }
+
+    .wrap{ max-width: 1460px; margin: 0 auto; padding: 18px; }
+    .top{
+      display:flex; align-items:center; justify-content:space-between;
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      border: 1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(255,255,255,0.09), rgba(255,255,255,0.06));
+      box-shadow: var(--shadow);
+    }
+    .brand{ display:flex; gap:12px; align-items:center; }
+    .logo{
+      width:40px; height:40px; border-radius: 14px;
+      background: radial-gradient(circle at 30% 30%, rgba(91,124,255,0.95), rgba(82,224,196,0.75));
+      box-shadow: 0 10px 25px rgba(91,124,255,0.25);
+    }
+    .title{ margin:0; font-size: 16px; font-weight: 900; letter-spacing: 0.2px; }
+    .subtitle{ margin:2px 0 0; font-size: 12px; color: var(--muted); }
+
+    .pill{
+      display:inline-flex; gap:10px; align-items:center;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--stroke);
+      background: rgba(255,255,255,0.06);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .grid{
+      margin-top: 14px;
+      display:grid;
+      grid-template-columns: 380px 1fr 340px;
+      gap: 14px;
+    }
+    @media (max-width: 1200px){
+      .grid{ grid-template-columns: 1fr; }
+    }
+
+    .card{
+      border-radius: var(--radius);
+      border: 1px solid var(--stroke);
+      background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.05));
+      box-shadow: var(--shadow2);
+      overflow:hidden;
+    }
+    .cardHead{
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display:flex; justify-content:space-between; align-items:center;
+    }
+    .cardHead h2{
+      margin:0;
+      font-size: 12px;
+      letter-spacing: 0.35px;
+      font-weight: 900;
+      color: rgba(255,255,255,0.88);
+    }
+    .cardBody{ padding: 14px; }
+
+    .seg{
+      display:grid; grid-template-columns: 1fr 1fr;
+      border: 1px solid var(--stroke);
+      border-radius: 14px;
+      overflow:hidden;
+    }
+    .seg button{
+      padding: 10px 10px;
+      border: 0;
+      cursor: pointer;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 12px;
+    }
+    .seg button.active{
+      background: rgba(91,124,255,0.18);
+      color: rgba(255,255,255,0.92);
+    }
+
+    label{ font-size: 12px; color: var(--muted); display:block; margin-bottom: 6px; }
+    input, select{
+      width:100%;
+      padding: 11px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(5,7,14,0.55);
+      color: rgba(255,255,255,0.92);
+      outline:none;
+    }
+    input[type="color"]{ padding: 6px; height: 42px; }
+    .row{ display:grid; gap: 10px; margin-top: 12px; }
+    .two{ display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .hint{ font-size: 11px; color: var(--muted2); line-height: 1.35; }
+
+    .btn{
+      width:100%;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: linear-gradient(180deg, rgba(91,124,255,0.9), rgba(91,124,255,0.65));
+      color: rgba(255,255,255,0.96);
+      font-weight: 900;
+      cursor:pointer;
+      box-shadow: 0 14px 35px rgba(91,124,255,0.22);
+    }
+    .btn:disabled{ opacity:0.65; cursor:not-allowed; }
+
+    .err{
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,92,122,0.35);
+      background: rgba(255,92,122,0.10);
+      color: rgba(255,255,255,0.92);
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+
+    .canvasWrap{ padding: 14px; }
+    .canvasBox{
+      position: relative;
+      width: 100%;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.10);
+      overflow:hidden;
+      background: rgba(0,0,0,0.18);
+      box-shadow: var(--shadow2);
+    }
+    .canvasImg{ width: 100%; display:block; height:auto; user-select:none; -webkit-user-drag:none; }
+    .canvasEmpty{
+      height: 520px;
+      display:grid;
+      place-items:center;
+      color: var(--muted);
+    }
+
+    .fieldList{ display:grid; gap:8px; margin-top: 10px; }
+    .fieldBtn{
+      width:100%;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.04);
+      color: rgba(255,255,255,0.86);
+      padding: 10px 10px;
+      text-align:left;
+      cursor:pointer;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap: 10px;
+    }
+    .fieldBtn.active{
+      border-color: rgba(91,124,255,0.35);
+      background: rgba(91,124,255,0.12);
+    }
+    .mini{ font-size: 11px; color: var(--muted2); margin-top: 3px; }
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 8px;
+      border:1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.85);
+    }
+    .slider{ width:100%; }
+  `;
 
   return (
     <>
-      {/* Global styles */}
-      <style>{`
-        :root{
-          --bg1:#0b1020;
-          --bg2:#0f1630;
-          --card: rgba(255,255,255,0.08);
-          --card2: rgba(255,255,255,0.06);
-          --stroke: rgba(255,255,255,0.10);
-          --stroke2: rgba(255,255,255,0.14);
-          --txt: rgba(255,255,255,0.92);
-          --muted: rgba(255,255,255,0.68);
-          --muted2: rgba(255,255,255,0.52);
-          --accent: #7b8cff;
-          --accent2:#52e0c4;
-          --danger:#ff5c7a;
-          --shadow: 0 18px 55px rgba(0,0,0,0.38);
-        }
-        *{ box-sizing:border-box; }
-        body{
-          margin:0;
-          background:
-            radial-gradient(1200px 800px at 20% -10%, rgba(123,140,255,0.35), transparent 60%),
-            radial-gradient(1000px 700px at 80% 0%, rgba(82,224,196,0.22), transparent 55%),
-            radial-gradient(900px 700px at 50% 110%, rgba(255,92,122,0.14), transparent 60%),
-            linear-gradient(180deg, var(--bg1), var(--bg2));
-          color: var(--txt);
-          font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
-        }
-        a{ color: inherit; }
-        .app-wrap{ max-width: 1420px; margin: 0 auto; padding: 22px; }
-        .topbar{
-          display:flex; align-items:center; justify-content:space-between;
-          padding: 14px 16px;
-          border-radius: 18px;
-          background: linear-gradient(180deg, rgba(255,255,255,0.09), rgba(255,255,255,0.06));
-          border: 1px solid var(--stroke);
-          box-shadow: var(--shadow);
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
-        }
-        .brand{
-          display:flex; gap:12px; align-items:center;
-        }
-        .logo{
-          width:40px; height:40px; border-radius:14px;
-          background: radial-gradient(circle at 30% 30%, rgba(123,140,255,0.95), rgba(82,224,196,0.75));
-          box-shadow: 0 10px 25px rgba(123,140,255,0.25);
-        }
-        .h1{ font-size:16px; font-weight:800; letter-spacing:0.2px; margin:0; }
-        .sub{ font-size:12px; color: var(--muted); margin:2px 0 0; }
+      <style>{css}</style>
 
-        .layout{
-          margin-top: 16px;
-          display:grid;
-          grid-template-columns: 380px 1fr 340px;
-          gap: 14px;
-        }
-        @media (max-width: 1200px){
-          .layout{ grid-template-columns: 1fr; }
-        }
-
-        .card{
-          border-radius: 18px;
-          border: 1px solid var(--stroke);
-          background: linear-gradient(180deg, var(--card), var(--card2));
-          box-shadow: var(--shadow);
-          backdrop-filter: blur(10px);
-          -webkit-backdrop-filter: blur(10px);
-          overflow:hidden;
-        }
-        .card-h{
-          padding: 14px 14px 10px;
-          border-bottom: 1px solid rgba(255,255,255,0.08);
-          display:flex; justify-content:space-between; align-items:center;
-        }
-        .card-h h2{
-          margin:0;
-          font-size: 13px;
-          letter-spacing:0.3px;
-          font-weight: 800;
-          color: rgba(255,255,255,0.88);
-        }
-        .card-b{ padding: 14px; }
-
-        .seg{
-          display:grid;
-          grid-template-columns: 1fr 1fr;
-          border: 1px solid rgba(255,255,255,0.12);
-          border-radius: 14px;
-          overflow:hidden;
-        }
-        .seg button{
-          padding:10px 10px;
-          background: transparent;
-          border:0;
-          color: var(--muted);
-          cursor:pointer;
-          font-weight: 700;
-          font-size: 12px;
-        }
-        .seg button.active{
-          background: rgba(123,140,255,0.16);
-          color: rgba(255,255,255,0.92);
-        }
-
-        .row{ display:grid; gap:10px; margin-top: 12px; }
-        label{ font-size:12px; color: var(--muted); display:block; margin-bottom:6px; }
-        input, select{
-          width:100%;
-          padding: 11px 12px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.12);
-          background: rgba(10,14,28,0.55);
-          color: rgba(255,255,255,0.92);
-          outline:none;
-        }
-        input::placeholder{ color: rgba(255,255,255,0.35); }
-        .hint{ font-size: 11px; color: var(--muted2); line-height: 1.35; }
-
-        .btn{
-          width:100%;
-          padding: 12px 14px;
-          border-radius: 16px;
-          border: 1px solid rgba(255,255,255,0.14);
-          background: linear-gradient(180deg, rgba(123,140,255,0.9), rgba(123,140,255,0.65));
-          color: rgba(255,255,255,0.96);
-          font-weight: 900;
-          cursor:pointer;
-          box-shadow: 0 14px 35px rgba(123,140,255,0.25);
-        }
-        .btn:disabled{ opacity:0.65; cursor:not-allowed; }
-        .btn.secondary{
-          background: rgba(255,255,255,0.08);
-          box-shadow:none;
-        }
-
-        .pill{
-          display:inline-flex;
-          align-items:center;
-          gap:8px;
-          padding: 8px 10px;
-          border-radius: 999px;
-          border:1px solid rgba(255,255,255,0.12);
-          background: rgba(255,255,255,0.06);
-          font-size: 12px;
-          color: var(--muted);
-        }
-        .err{
-          margin-top: 10px;
-          padding: 10px 12px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,92,122,0.35);
-          background: rgba(255,92,122,0.10);
-          color: rgba(255,255,255,0.92);
-          font-size: 12px;
-          white-space: pre-wrap;
-        }
-
-        .canvas-wrap{
-          padding: 14px;
-        }
-        .canvas-box{
-          position:relative;
-          width:100%;
-          border-radius: 18px;
-          border: 1px solid rgba(255,255,255,0.10);
-          overflow:hidden;
-          background: rgba(0,0,0,0.18);
-          box-shadow: 0 18px 55px rgba(0,0,0,0.35);
-        }
-        .canvas-img{
-          width: 100%;
-          display:block;
-          height:auto;
-        }
-        .canvas-empty{
-          height: 520px;
-          display:grid;
-          place-items:center;
-          color: var(--muted);
-        }
-
-        .fieldlist{
-          display:grid;
-          grid-template-columns: 1fr;
-          gap: 8px;
-        }
-        .fieldbtn{
-          padding: 10px 10px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.10);
-          background: rgba(255,255,255,0.04);
-          color: rgba(255,255,255,0.85);
-          cursor:pointer;
-          text-align:left;
-          display:flex;
-          justify-content:space-between;
-          align-items:center;
-        }
-        .fieldbtn.active{
-          border-color: rgba(123,140,255,0.35);
-          background: rgba(123,140,255,0.12);
-        }
-        .mini{ font-size: 11px; color: var(--muted2); }
-
-        .two{
-          display:grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-        }
-        .slider{
-          width:100%;
-        }
-        .kbd{
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-          font-size: 11px;
-          padding: 2px 6px;
-          border-radius: 8px;
-          border:1px solid rgba(255,255,255,0.14);
-          background: rgba(255,255,255,0.06);
-          color: rgba(255,255,255,0.85);
-        }
-      `}</style>
-
-      <div className="app-wrap">
-        <div className="topbar">
+      <div className="wrap">
+        <div className="top">
           <div className="brand">
             <div className="logo" />
             <div>
-              <p className="h1">Certifyly Studio</p>
-              <p className="sub">Modern certificate editor — click, drag, edit inline</p>
+              <p className="title">Certifyly Studio</p>
+              <p className="subtitle">Click to select • Drag to move • Resize corners • Double-click to edit</p>
             </div>
           </div>
 
@@ -755,20 +781,24 @@ export default function App() {
               Templates: {templatesLoading ? "Loading…" : templates.length}
             </span>
             <span className="pill">
-              <span style={{ width: 8, height: 8, borderRadius: 999, background: "rgba(123,140,255,0.9)" }} />
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "rgba(91,124,255,0.9)" }} />
               Selected: {prettyFieldName(selectedKey)}
+            </span>
+            <span className="pill">
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "rgba(255,255,255,0.7)" }} />
+              Size unit: <span className="kbd">pt</span>
             </span>
           </div>
         </div>
 
-        <div className="layout">
-          {/* LEFT: Data & template settings */}
+        <div className="grid">
+          {/* LEFT: Inputs */}
           <div className="card">
-            <div className="card-h">
+            <div className="cardHead">
               <h2>DATA & TEMPLATE</h2>
-              <span className="kbd">Drag • Double-click edit</span>
+              <span className="kbd">Enter saves • Esc cancels</span>
             </div>
-            <div className="card-b">
+            <div className="cardBody">
               <div className="seg">
                 <button className={inputMode === "manual" ? "active" : ""} onClick={() => setInputMode("manual")}>
                   Manual
@@ -784,34 +814,32 @@ export default function App() {
                     <div>
                       <label>Name</label>
                       <input value={manualName} onChange={(e) => setManualName(e.target.value)} />
-                      <div className="hint">Used for the “Name” field. You can also edit it directly on the canvas.</div>
+                      <div className="hint">You can also edit “Name” directly on the canvas.</div>
                     </div>
+
                     <div>
                       <label>Award / Title</label>
                       <input value={manualAward} onChange={(e) => setManualAward(e.target.value)} />
-                      <div className="hint">Used for the “Award / Title” field.</div>
                     </div>
                   </>
                 ) : (
-                  <>
-                    <div>
-                      <label>Upload .csv or .txt</label>
-                      <input
-                        type="file"
-                        accept=".csv,.txt,text/csv,text/plain"
-                        onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
-                      />
-                      <div className="hint">
-                        CSV: <span className="kbd">name,title</span> (optional: date, issuer) <br />
-                        TXT: <span className="kbd">Name - Title</span>
-                      </div>
-                      {uploadFile && rows.length > 0 && (
-                        <div className="hint" style={{ marginTop: 6 }}>
-                          Loaded rows: <b>{rows.length}</b> (preview uses first row)
-                        </div>
-                      )}
+                  <div>
+                    <label>Upload .csv or .txt</label>
+                    <input
+                      type="file"
+                      accept=".csv,.txt,text/csv,text/plain"
+                      onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
+                    />
+                    <div className="hint">
+                      CSV: <span className="kbd">name,title</span> (optional: date, issuer)<br />
+                      TXT: <span className="kbd">Name - Title</span>
                     </div>
-                  </>
+                    {uploadFile && rows.length > 0 && (
+                      <div className="hint" style={{ marginTop: 6 }}>
+                        Loaded rows: <b>{rows.length}</b> (preview uses first row)
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 <div className="two">
@@ -834,7 +862,9 @@ export default function App() {
                         ))
                       )}
                     </select>
-                    <div className="hint">R2 folder: <span className="kbd">templates/</span></div>
+                    <div className="hint">
+                      Loaded from R2 folder: <span className="kbd">templates/</span>
+                    </div>
                   </div>
 
                   <div>
@@ -843,11 +873,38 @@ export default function App() {
                       <option value="A4">A4 (landscape)</option>
                       <option value="LETTER">US Letter (landscape)</option>
                     </select>
-                    <div className="hint">Letter may crop slightly in PDF.</div>
+                    <div className="hint">Letter uses cover-fit; may crop edges.</div>
                   </div>
                 </div>
 
-                <button className="btn" disabled={busy || templatesLoading || !templateKey} onClick={generatePreviewPdf}>
+                <div className="two">
+                  <div>
+                    <label>Certificate Title</label>
+                    <input value={certTitle} onChange={(e) => setCertTitle(e.target.value)} />
+                  </div>
+                  <div>
+                    <label>Subtitle</label>
+                    <input value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="two">
+                  <div>
+                    <label>Description</label>
+                    <input value={description} onChange={(e) => setDescription(e.target.value)} />
+                  </div>
+                  <div>
+                    <label>Date</label>
+                    <input value={dateText} onChange={(e) => setDateText(e.target.value)} />
+                  </div>
+                </div>
+
+                <div>
+                  <label>Issuer</label>
+                  <input value={issuer} onChange={(e) => setIssuer(e.target.value)} />
+                </div>
+
+                <button className="btn" onClick={generatePreviewPdf} disabled={busy || templatesLoading || !templateKey}>
                   {busy ? "Generating…" : "Generate Preview PDF"}
                 </button>
 
@@ -858,148 +915,53 @@ export default function App() {
 
           {/* CENTER: Canvas */}
           <div className="card">
-            <div className="card-h">
-              <h2>CANVAS</h2>
+            <div className="cardHead">
+              <h2>LIVE PREVIEW</h2>
               <span className="pill">
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: "rgba(255,255,255,0.75)" }} />
-                Click a field to select
+                Resize: drag <span className="kbd">corners</span>
               </span>
             </div>
-
-            <div className="canvas-wrap">
-              <div ref={previewBoxRef} className="canvas-box" onPointerDown={() => { /* click empty space */ }}>
+            <div className="canvasWrap">
+              <div
+                ref={previewBoxRef}
+                className="canvasBox"
+                onPointerDown={(e) => {
+                  // clicking empty space clears selection
+                  if (e.target === previewBoxRef.current) setSelectedKey("");
+                }}
+              >
                 {previewImageUrl ? (
-                  <img className="canvas-img" src={previewImageUrl} alt="Template preview" />
+                  <img className="canvasImg" src={previewImageUrl} alt="Template preview" draggable={false} />
                 ) : (
-                  <div className="canvas-empty">{templatesLoading ? "Loading templates…" : "No template preview"}</div>
+                  <div className="canvasEmpty">{templatesLoading ? "Loading templates…" : "No template preview"}</div>
                 )}
 
-                {canvasFields.map((f) => (
-                  <CanvasField
+                {fields.map((f) => (
+                  <CanvasText
                     key={f.key}
                     fieldKey={f.key}
                     text={f.text}
-                    pos={pos[f.key]}
+                    pos={f.pos}
+                    style={f.style}
                     selected={selectedKey === f.key}
                     onSelect={setSelectedKey}
-                    onPosChange={updatePos}
-                    onTextChange={updateText}
+                    onPosChange={onPosChange}
+                    onTextChange={onTextChange}
+                    onStyleChange={onStyleChange}
                     previewBoxRef={previewBoxRef}
-                    style={f.style}
                   />
                 ))}
               </div>
 
               <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <span className="pill">Tip: double-click a field to edit</span>
-                <span className="pill">Press <span className="kbd">Enter</span> to save</span>
-                <span className="pill">Press <span className="kbd">Esc</span> to cancel</span>
+                <span className="pill">
+                  Tip: double-click to edit • <span className="kbd">Enter</span> save • <span className="kbd">Esc</span> cancel
+                </span>
               </div>
             </div>
           </div>
 
           {/* RIGHT: Inspector */}
           <div className="card">
-            <div className="card-h">
+            <div className="cardHead">
               <h2>INSPECTOR</h2>
-              <span className="pill">Selected: <b style={{ color: "rgba(255,255,255,0.92)" }}>{prettyFieldName(selectedKey)}</b></span>
-            </div>
-            <div className="card-b">
-              <div className="fieldlist">
-                {FIELD_KEYS.map((k) => (
-                  <button
-                    key={k}
-                    className={`fieldbtn ${selectedKey === k ? "active" : ""}`}
-                    onClick={() => setSelectedKey(k)}
-                    type="button"
-                  >
-                    <div>
-                      <div style={{ fontWeight: 900, fontSize: 12 }}>{prettyFieldName(k)}</div>
-                      <div className="mini">{String(getFieldText(k)).slice(0, 26)}{String(getFieldText(k)).length > 26 ? "…" : ""}</div>
-                    </div>
-                    <span style={{ color: "rgba(255,255,255,0.55)" }}>→</span>
-                  </button>
-                ))}
-              </div>
-
-              <div style={{ marginTop: 14 }} className="row">
-                <div>
-                  <label>Font</label>
-                  <select
-                    value={inspectorStyle.font}
-                    onChange={(e) => updateStyle(selectedKey, { font: e.target.value })}
-                  >
-                    {FONT_OPTIONS.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.label}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="hint">Live preview uses closest system fallback (PDF uses StandardFonts).</div>
-                </div>
-
-                <div className="two">
-                  <div>
-                    <label>Color</label>
-                    <input
-                      type="color"
-                      value={inspectorStyle.color}
-                      onChange={(e) => updateStyle(selectedKey, { color: e.target.value })}
-                      style={{ height: 44 }}
-                    />
-                  </div>
-                  <div>
-                    <label>Weight</label>
-                    <select
-                      value={String(inspectorStyle.weight ?? 600)}
-                      onChange={(e) => updateStyle(selectedKey, { weight: Number(e.target.value) })}
-                    >
-                      <option value="400">Regular (400)</option>
-                      <option value="500">Medium (500)</option>
-                      <option value="600">Semi (600)</option>
-                      <option value="700">Bold (700)</option>
-                      <option value="800">Extra (800)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label>Size (preview)</label>
-                  <input
-                    className="slider"
-                    type="range"
-                    min="10"
-                    max="60"
-                    value={inspectorStyle.size ?? 18}
-                    onChange={(e) => updateStyle(selectedKey, { size: Number(e.target.value) })}
-                  />
-                  <div className="hint">This adjusts the live preview. If you want PDF to match size exactly, we’ll wire size into preview.js too.</div>
-                </div>
-
-                <button
-                  className="btn secondary"
-                  type="button"
-                  onClick={() => {
-                    // reset a selected field to sane defaults
-                    const defaults = {
-                      certTitle: { font: "helvetica", color: "#1e2233", size: 40, weight: 800 },
-                      subtitle: { font: "helvetica", color: "#2b2f44", size: 18, weight: 500 },
-                      name: { font: "helvetica", color: "#1e2233", size: 32, weight: 800 },
-                      description: { font: "helvetica", color: "#2b2f44", size: 16, weight: 400 },
-                      award: { font: "helvetica", color: "#2b2f44", size: 18, weight: 600 },
-                      date: { font: "helvetica", color: "#2b2f44", size: 12, weight: 600 },
-                      issuer: { font: "helvetica", color: "#1e2233", size: 14, weight: 700 },
-                    };
-                    updateStyle(selectedKey, defaults[selectedKey] || {});
-                  }}
-                >
-                  Reset selected style
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
