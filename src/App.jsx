@@ -1,849 +1,1132 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Stage, Layer, Text, Image, Transformer } from "react-konva";
-import Konva from "konva";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Stage, Layer, Image as KImage, Text as KText, Transformer } from "react-konva";
 import useImage from "use-image";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
+import JSZip from "jszip";
 
-const WIDTH = 595;
-const HEIGHT = 842;
+// ---------- Canvas sizes (pt-like pixels) ----------
+const SIZES = {
+  A4: { w: 842, h: 595 }, // landscape
+  LETTER: { w: 792, h: 612 }, // landscape
+};
 
-const TEMPLATE_OPTIONS = [
-  {
-    id: "professional",
-    label: "Professional (Blue)",
-    url: "https://cdn.budgetwonders.eu/templates/professional.png"
-  },
-  {
-    id: "classic",
-    label: "Classic (Gold)",
-    url: "https://cdn.budgetwonders.eu/templates/professional.png"
-  },
-  {
-    id: "playful",
-    label: "Playful (Kids)",
-    url: "https://cdn.budgetwonders.eu/templates/professional.png"
-  },
-  {
-    id: "custom",
-    label: "Custom URL",
-    url: ""
+const MAX_PREVIEW = 5;
+
+// ---------- Helpers ----------
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function parseCsv(text) {
+  const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
+  if (lines.length < 2) return { error: "CSV must include header + at least 1 row." };
+
+  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const nameIndex = header.indexOf("name");
+  const titleIndex = header.indexOf("title");
+  const dateIndex = header.indexOf("date");
+  const issuerIndex = header.indexOf("issuer");
+
+  if (nameIndex === -1 || titleIndex === -1) {
+    return { error: "CSV must include headers: name,title (date optional, issuer optional)." };
   }
-];
+
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",").map((c) => c.trim());
+    const name = cols[nameIndex] || "";
+    const award = cols[titleIndex] || "";
+    const date = dateIndex >= 0 ? cols[dateIndex] || "" : "";
+    const issuer = issuerIndex >= 0 ? cols[issuerIndex] || "" : "";
+    if (!name || !award) continue;
+    rows.push({ name, award, date, issuer });
+  }
+  if (rows.length === 0) return { error: "No valid rows found (need name + title)." };
+  return { rows };
+}
+
+// TXT: "Name - Title"
+function parseTxt(text) {
+  const lines = text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return { error: "TXT must include at least 1 line." };
+  const rows = [];
+  for (const line of lines) {
+    const parts = line.split(" - ");
+    if (parts.length >= 2) rows.push({ name: parts[0].trim(), award: parts.slice(1).join(" - ").trim(), date: "", issuer: "" });
+  }
+  if (rows.length === 0) return { error: 'TXT lines must be like: "Name - Title"' };
+  return { rows };
+}
+
+// Draw background “cover”
+function coverRect(imgW, imgH, boxW, boxH) {
+  const scale = Math.max(boxW / imgW, boxH / imgH);
+  const w = imgW * scale;
+  const h = imgH * scale;
+  const x = (boxW - w) / 2;
+  const y = (boxH - h) / 2;
+  return { x, y, w, h };
+}
+
+// Load Google fonts (so canvas text matches what users expect)
+function ensureFontLink() {
+  const id = "certifyly-fonts";
+  if (document.getElementById(id)) return;
+  const link = document.createElement("link");
+  link.id = id;
+  link.rel = "stylesheet";
+  link.href =
+    "https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Playfair+Display:wght@400;600;700&family=Montserrat:wght@400;600;700&family=Poppins:wght@400;600;700&family=Oswald:wght@400;600;700&display=swap";
+  document.head.appendChild(link);
+}
 
 const FONT_OPTIONS = [
-  { id: "playfair", label: "Playfair Display", family: "Times New Roman", type: "serif" },
-  { id: "merriweather", label: "Merriweather", family: "Times New Roman", type: "serif" },
-  { id: "lora", label: "Lora", family: "Times New Roman", type: "serif" },
-  { id: "garamond", label: "Garamond", family: "Times New Roman", type: "serif" },
-  { id: "baskerville", label: "Libre Baskerville", family: "Times New Roman", type: "serif" },
-  { id: "eb-garamond", label: "EB Garamond", family: "Times New Roman", type: "serif" },
-  { id: "cormorant", label: "Cormorant Garamond", family: "Times New Roman", type: "serif" },
-  { id: "alegreya", label: "Alegreya", family: "Times New Roman", type: "serif" },
-  { id: "montserrat", label: "Montserrat", family: "Helvetica", type: "sans" },
-  { id: "poppins", label: "Poppins", family: "Helvetica", type: "sans" },
-  { id: "raleway", label: "Raleway", family: "Helvetica", type: "sans" },
-  { id: "nunito", label: "Nunito", family: "Helvetica", type: "sans" },
-  { id: "oswald", label: "Oswald", family: "Helvetica", type: "sans" },
-  { id: "roboto", label: "Roboto Slab", family: "Helvetica", type: "sans" },
-  { id: "cinzel", label: "Cinzel", family: "Times New Roman", type: "serif" },
-  { id: "crimson", label: "Crimson Text", family: "Times New Roman", type: "serif" },
-  { id: "georgia", label: "Georgia", family: "Times New Roman", type: "serif" },
-  { id: "palatino", label: "Palatino", family: "Times New Roman", type: "serif" },
-  { id: "gill", label: "Gill Sans", family: "Helvetica", type: "sans" },
-  { id: "courier", label: "Classic Typewriter", family: "Courier New", type: "mono" }
+  { id: "Inter", label: "Inter (Modern)" },
+  { id: "Playfair Display", label: "Playfair Display (Elegant)" },
+  { id: "Montserrat", label: "Montserrat (Clean)" },
+  { id: "Poppins", label: "Poppins (Friendly)" },
+  { id: "Oswald", label: "Oswald (Bold)" },
 ];
 
-const DEFAULT_FONT = FONT_OPTIONS[0];
-
-export default function App() {
-  const stageRef = useRef(null);
-  const transformerRef = useRef(null);
-
-  const [selectedId, setSelectedId] = useState("certTitle");
-
-  const [fields, setFields] = useState([
+function niceFieldLabel(id) {
+  return (
     {
-      id: "certTitle",
-      label: "Certificate Heading",
-      text: "Certificate of Achievement",
-      x: WIDTH / 2,
-      y: 140,
-      fontSize: 40,
-      fontStyle: "bold",
-      fontFamily: DEFAULT_FONT.family,
-      fontKey: DEFAULT_FONT.id,
-      fill: "#1e2233",
-      align: "center"
-    },
-    {
-      id: "recipientName",
-      label: "Recipient Name",
-      text: "John Doe",
-      x: WIDTH / 2,
-      y: 360,
-      fontSize: 34,
-      fontStyle: "bold",
-      fontFamily: DEFAULT_FONT.family,
-      fontKey: DEFAULT_FONT.id,
-      fill: "#111",
-      align: "center"
-    },
-    {
-      id: "awardTitle",
-      label: "Award Title",
-      text: "Outstanding Participation",
-      x: WIDTH / 2,
-      y: 430,
-      fontSize: 22,
-      fontStyle: "normal",
-      fontFamily: DEFAULT_FONT.family,
-      fontKey: DEFAULT_FONT.id,
-      fill: "#333",
-      align: "center"
-    }
-  ]);
-
-  const [selectedTemplateId, setSelectedTemplateId] = useState(
-    TEMPLATE_OPTIONS[0].id
+      certTitle: "Certificate Title",
+      subtitle: "Free text (below title)",
+      name: "Name",
+      description: "Free text (below name)",
+      award: "Title / Award",
+      date: "Date",
+      issuer: "Issuer",
+    }[id] || id
   );
-  const [customTemplateUrl, setCustomTemplateUrl] = useState(
-    TEMPLATE_OPTIONS[0].url
-  );
+}
 
-  const resolvedTemplateUrl =
-    selectedTemplateId === "custom"
-      ? customTemplateUrl
-      : TEMPLATE_OPTIONS.find((template) => template.id === selectedTemplateId)
-          ?.url ?? "";
-
-  const [bgImage] = useImage(resolvedTemplateUrl);
-
-  const [entries, setEntries] = useState([
-    {
-      id: crypto.randomUUID(),
-      name: "John Doe",
-      title: "Outstanding Participation"
-    }
-  ]);
-  const [activeEntryId, setActiveEntryId] = useState(entries[0]?.id);
-  const [manualName, setManualName] = useState("");
-  const [manualTitle, setManualTitle] = useState("");
-
-  const activeEntry = useMemo(
-    () => entries.find((entry) => entry.id === activeEntryId) ?? entries[0],
-    [entries, activeEntryId]
-  );
-
-  const selectedField = fields.find((field) => field.id === selectedId);
+// ---------- Editable overlay for double-click editing ----------
+function TextEditorOverlay({ open, value, onChange, onClose, stageContainerRef, nodeAbsRect }) {
+  const ref = useRef(null);
 
   useEffect(() => {
-    if (selectedId && transformerRef.current) {
-      const node = stageRef.current?.findOne(`#${selectedId}`);
-      if (node) {
-        transformerRef.current.nodes([node]);
-        transformerRef.current.getLayer().batchDraw();
-      }
-    }
-  }, [selectedId]);
+    if (!open) return;
+    const t = setTimeout(() => ref.current?.focus(), 10);
+    return () => clearTimeout(t);
+  }, [open]);
 
-  function updateField(id, newAttrs) {
-    setFields((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, ...newAttrs } : f))
-    );
-  }
+  if (!open || !nodeAbsRect) return null;
 
-  function handleTemplateSelect(event) {
-    setSelectedTemplateId(event.target.value);
-  }
-
-  function handleCustomTemplateChange(event) {
-    setCustomTemplateUrl(event.target.value.trim());
-  }
-
-  function handleAddEntry() {
-    if (!manualName.trim()) {
-      return;
-    }
-    const newEntry = {
-      id: crypto.randomUUID(),
-      name: manualName.trim(),
-      title: manualTitle.trim() || "Participant"
-    };
-    setEntries((prev) => [...prev, newEntry]);
-    setManualName("");
-    setManualTitle("");
-    setActiveEntryId(newEntry.id);
-  }
-
-  function handleRemoveEntry(entryId) {
-    setEntries((prev) => {
-      const remaining = prev.filter((entry) => entry.id !== entryId);
-      if (activeEntryId === entryId) {
-        setActiveEntryId(remaining[0]?.id ?? null);
-      }
-      return remaining;
-    });
-  }
-
-  function handleBatchUpload(event) {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result;
-      if (typeof text !== "string") {
-        return;
-      }
-      const parsedEntries = parseCsv(text);
-      if (parsedEntries.length) {
-        setEntries((prev) => [...prev, ...parsedEntries]);
-        setActiveEntryId(parsedEntries[0].id);
-      }
-    };
-    reader.readAsText(file);
-    event.target.value = "";
-  }
-
-  function parseCsv(text) {
-    const lines = text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (!lines.length) {
-      return [];
-    }
-    const delimiter = lines[0].includes("\t") ? "\t" : ",";
-    const rows = lines.map((line) =>
-      line
-        .split(delimiter)
-        .map((cell) => cell.trim().replace(/^"|"$/g, ""))
-    );
-    const header = rows[0].map((cell) => cell.toLowerCase());
-    const hasHeader = header.includes("name") || header.includes("title");
-    const dataRows = hasHeader ? rows.slice(1) : rows;
-    const nameIndex = hasHeader ? header.indexOf("name") : 0;
-    const titleIndex = hasHeader ? header.indexOf("title") : 1;
-
-    return dataRows
-      .map((row) => ({
-        id: crypto.randomUUID(),
-        name: row[nameIndex] ?? "",
-        title: row[titleIndex] ?? ""
-      }))
-      .filter((entry) => entry.name.trim().length > 0);
-  }
-
-  async function handleGeneratePdf() {
-    if (!entries.length || !resolvedTemplateUrl) {
-      return;
-    }
-    const pdfDoc = await PDFDocument.create();
-    const templateBytes = await fetch(resolvedTemplateUrl).then((res) =>
-      res.arrayBuffer()
-    );
-    const isPng = resolvedTemplateUrl.toLowerCase().includes(".png");
-    const templateImage = isPng
-      ? await pdfDoc.embedPng(templateBytes)
-      : await pdfDoc.embedJpg(templateBytes);
-
-    const embeddedFonts = new Map();
-    const resolveFont = async (field) => {
-      const fontKey = `${field.fontKey}-${field.fontStyle}`;
-      if (embeddedFonts.has(fontKey)) {
-        return embeddedFonts.get(fontKey);
-      }
-      const fontOption = FONT_OPTIONS.find((font) => font.id === field.fontKey);
-      const style = field.fontStyle === "italic" ? "italic" : field.fontStyle;
-      const pdfFontName = resolvePdfFontName(fontOption?.type, style);
-      const pdfFont = await pdfDoc.embedFont(pdfFontName);
-      embeddedFonts.set(fontKey, pdfFont);
-      return pdfFont;
-    };
-
-    for (const entry of entries) {
-      const page = pdfDoc.addPage([WIDTH, HEIGHT]);
-      page.drawImage(templateImage, {
-        x: 0,
-        y: 0,
-        width: WIDTH,
-        height: HEIGHT
-      });
-
-      const resolvedFields = fields.map((field) => ({
-        ...field,
-        text:
-          field.id === "recipientName"
-            ? entry.name
-            : field.id === "awardTitle"
-              ? entry.title
-              : field.text
-      }));
-
-      for (const field of resolvedFields) {
-        const font = await resolveFont(field);
-        const textWidth = font.widthOfTextAtSize(field.text, field.fontSize);
-        const drawX = getAlignedX(field, textWidth);
-        const drawY = HEIGHT - field.y - field.fontSize;
-        const color = hexToRgb(field.fill);
-        page.drawText(field.text, {
-          x: drawX,
-          y: drawY,
-          size: field.fontSize,
-          font,
-          color: rgb(color.r, color.g, color.b)
-        });
-      }
-    }
-
-    const pdfBytes = await pdfDoc.save();
-    const blob = new Blob([pdfBytes], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "certificates-batch.pdf";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }
-
-  function handleFieldInput(fieldId, key, value) {
-    updateField(fieldId, { [key]: value });
-  }
-
-  function handleFontChange(fieldId, fontKey) {
-    const font = FONT_OPTIONS.find((option) => option.id === fontKey);
-    if (!font) {
-      return;
-    }
-    updateField(fieldId, { fontKey, fontFamily: font.family });
-  }
-
-  function getAlignedX(field, textWidth) {
-    if (field.align === "center") {
-      return field.x - textWidth / 2;
-    }
-    if (field.align === "right") {
-      return field.x - textWidth;
-    }
-    return field.x;
-  }
-
-  function getTextWidth(field, text) {
-    const sample = new Konva.Text({
-      text,
-      fontSize: field.fontSize,
-      fontFamily: field.fontFamily,
-      fontStyle: field.fontStyle
-    });
-    return sample.width();
-  }
+  const { left, top, width, height } = nodeAbsRect;
 
   return (
-    <div style={{ padding: 40, fontFamily: "Inter, system-ui, sans-serif" }}>
-      <header style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 32, marginBottom: 6 }}>
-          Bulk Certificate Generator
-        </h1>
-        <p style={{ marginTop: 0, color: "#4f5565", maxWidth: 720 }}>
-          Choose a template, add learners manually or via CSV, fine-tune your text
-          styling, and export a full A4 batch PDF with a matching live preview.
-        </p>
-      </header>
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onClose}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onClose();
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onClose();
+        }
+      }}
+      style={{
+        position: "absolute",
+        left,
+        top,
+        width: Math.max(120, width),
+        height: Math.max(34, height),
+        padding: "8px 10px",
+        borderRadius: 10,
+        border: "2px solid rgba(91,124,255,0.9)",
+        outline: "none",
+        fontSize: 16,
+        lineHeight: 1.2,
+        resize: "none",
+        background: "rgba(255,255,255,0.95)",
+        boxShadow: "0 12px 25px rgba(0,0,0,0.15)",
+        zIndex: 50,
+      }}
+    />
+  );
+}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(300px, 380px) 1fr",
-          gap: 32,
-          alignItems: "start"
-        }}
-      >
-        <section style={panelStyle}>
-          <h2 style={sectionTitleStyle}>Template & Batch</h2>
+// ---------- Main App ----------
+export default function App() {
+  useEffect(() => ensureFontLink(), []);
 
-          <label style={labelStyle}>Template selection</label>
-          <select
-            value={selectedTemplateId}
-            onChange={handleTemplateSelect}
-            style={inputStyle}
-          >
-            {TEMPLATE_OPTIONS.map((template) => (
-              <option key={template.id} value={template.id}>
-                {template.label}
-              </option>
-            ))}
-          </select>
+  // Templates loaded from R2 via /api/templates
+  const [templates, setTemplates] = useState([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templatesError, setTemplatesError] = useState("");
 
-          {selectedTemplateId === "custom" && (
-            <input
-              type="url"
-              value={customTemplateUrl}
-              onChange={handleCustomTemplateChange}
-              placeholder="https://your-r2-bucket/template.png"
-              style={inputStyle}
-            />
+  const [paper, setPaper] = useState("A4");
+  const { w: CW, h: CH } = SIZES[paper];
+
+  const [templateKey, setTemplateKey] = useState("");
+  const selectedTemplate = useMemo(() => templates.find((t) => t.key === templateKey) || null, [templates, templateKey]);
+
+  // Input mode: manual vs upload
+  const [inputMode, setInputMode] = useState("manual"); // manual | upload
+  const [uploadFile, setUploadFile] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [manualName, setManualName] = useState("Student Name");
+  const [manualAward, setManualAward] = useState("For outstanding performance");
+  const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
+  const [issuerText, setIssuerText] = useState("Issuer / Organization");
+
+  // Extra free text fields
+  const [certTitle, setCertTitle] = useState("Certificate of Achievement");
+  const [subtitle, setSubtitle] = useState("");
+  const [description, setDescription] = useState("");
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  // Konva
+  const stageRef = useRef(null);
+  const stageContainerRef = useRef(null);
+  const transformerRef = useRef(null);
+
+  const [selectedId, setSelectedId] = useState("");
+
+  // Fields on canvas (pixel positions)
+  const [fields, setFields] = useState(() => [
+    {
+      id: "certTitle",
+      text: "Certificate of Achievement",
+      x: CW / 2,
+      y: 110,
+      fontFamily: "Inter",
+      fontSize: 44,
+      fontStyle: "bold",
+      fill: "#1e2233",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "subtitle",
+      text: "",
+      x: CW / 2,
+      y: 165,
+      fontFamily: "Inter",
+      fontSize: 18,
+      fontStyle: "normal",
+      fill: "#2b2f44",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "name",
+      text: "Student Name",
+      x: CW / 2,
+      y: 270,
+      fontFamily: "Inter",
+      fontSize: 38,
+      fontStyle: "bold",
+      fill: "#1e2233",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "description",
+      text: "",
+      x: CW / 2,
+      y: 322,
+      fontFamily: "Inter",
+      fontSize: 16,
+      fontStyle: "normal",
+      fill: "#2b2f44",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "award",
+      text: "For outstanding performance",
+      x: CW / 2,
+      y: 380,
+      fontFamily: "Inter",
+      fontSize: 20,
+      fontStyle: "normal",
+      fill: "#2b2f44",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "date",
+      text: `Date: ${new Date().toISOString().slice(0, 10)}`,
+      x: 115,
+      y: 560,
+      fontFamily: "Inter",
+      fontSize: 14,
+      fontStyle: "normal",
+      fill: "#2b2f44",
+      align: "left",
+      width: 260,
+    },
+    {
+      id: "issuer",
+      text: "Issuer / Organization",
+      x: 680,
+      y: 550,
+      fontFamily: "Inter",
+      fontSize: 16,
+      fontStyle: "bold",
+      fill: "#1e2233",
+      align: "right",
+      width: 300,
+    },
+  ]);
+
+  // Keep field texts in sync with form state
+  useEffect(() => {
+    setFields((prev) =>
+      prev.map((f) => {
+        if (f.id === "certTitle") return { ...f, text: certTitle };
+        if (f.id === "subtitle") return { ...f, text: subtitle };
+        if (f.id === "description") return { ...f, text: description };
+        return f;
+      })
+    );
+  }, [certTitle, subtitle, description]);
+
+  const sampleRow = useMemo(() => {
+    if (inputMode === "manual") return { name: manualName, award: manualAward, date: dateText, issuer: issuerText };
+    return rows[0] || { name: "Student Name", award: "For outstanding performance", date: dateText, issuer: issuerText };
+  }, [inputMode, manualName, manualAward, dateText, issuerText, rows]);
+
+  // Sync dynamic row-based fields to the canvas for preview
+  useEffect(() => {
+    setFields((prev) =>
+      prev.map((f) => {
+        if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+        if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+        if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
+        if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
+        return f;
+      })
+    );
+  }, [sampleRow, issuerText]);
+
+  // When paper changes, adjust stage + keep fields proportional-ish
+  useEffect(() => {
+    const { w, h } = SIZES[paper];
+    setFields((prev) =>
+      prev.map((f) => ({
+        ...f,
+        x: clamp((f.x / CW) * w, 0, w),
+        y: clamp((f.y / CH) * h, 0, h),
+        width: (f.width / CW) * w,
+      }))
+    );
+    setSelectedId("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paper]);
+
+  // Load templates list
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setTemplatesLoading(true);
+      setTemplatesError("");
+      try {
+        const res = await fetch("/api/templates");
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (!alive) return;
+        setTemplates(data.templates || []);
+        // auto select first template
+        if ((data.templates || []).length > 0) setTemplateKey((data.templates || [])[0].key);
+      } catch (e) {
+        if (!alive) return;
+        setTemplatesError(String(e?.message || "Failed to load templates"));
+      } finally {
+        if (!alive) return;
+        setTemplatesLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Background image
+  const [bg] = useImage(selectedTemplate?.url || "", "anonymous");
+
+  // Attach transformer to selected node
+  useEffect(() => {
+    const tr = transformerRef.current;
+    const stage = stageRef.current;
+    if (!tr || !stage) return;
+
+    if (!selectedId) {
+      tr.nodes([]);
+      tr.getLayer()?.batchDraw();
+      return;
+    }
+    const node = stage.findOne(`#${selectedId}`);
+    if (!node) return;
+
+    tr.nodes([node]);
+    tr.getLayer()?.batchDraw();
+  }, [selectedId, fields]);
+
+  function updateField(id, patch) {
+    setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  }
+
+  async function handleUpload(file) {
+    setUploadFile(file);
+    setError("");
+    const text = await file.text();
+    let parsed;
+    if (file.name.toLowerCase().endsWith(".csv")) parsed = parseCsv(text);
+    else if (file.name.toLowerCase().endsWith(".txt")) parsed = parseTxt(text);
+    else parsed = { error: "Upload a .csv or .txt file." };
+
+    if (parsed.error) {
+      setRows([]);
+      setError(parsed.error);
+    } else {
+      setRows(parsed.rows);
+    }
+  }
+
+  const selectedField = useMemo(() => fields.find((f) => f.id === selectedId) || null, [fields, selectedId]);
+
+  // Inline editing overlay
+  const [editingId, setEditingId] = useState("");
+  const [editorValue, setEditorValue] = useState("");
+  const [editorRect, setEditorRect] = useState(null);
+
+  function openEditorFor(id) {
+    const stage = stageRef.current;
+    const container = stageContainerRef.current;
+    if (!stage || !container) return;
+
+    const node = stage.findOne(`#${id}`);
+    if (!node) return;
+
+    const text = fields.find((f) => f.id === id)?.text ?? "";
+    setEditingId(id);
+    setEditorValue(text);
+
+    const absPos = node.getAbsolutePosition();
+    const scale = stage.scaleX(); // usually 1
+    const box = node.getClientRect({ relativeTo: stage });
+
+    const containerRect = container.getBoundingClientRect();
+    // Stage is fixed size; we draw 1:1, and we scale container via CSS (responsive).
+    // We compute overlay rect by using the rendered canvas bounding box:
+    const canvasEl = container.querySelector("canvas");
+    const canvasRect = canvasEl.getBoundingClientRect();
+
+    const sx = canvasRect.width / CW;
+    const sy = canvasRect.height / CH;
+
+    setEditorRect({
+      left: canvasRect.left + box.x * sx,
+      top: canvasRect.top + box.y * sy,
+      width: box.width * sx,
+      height: box.height * sy,
+      containerLeft: containerRect.left,
+      containerTop: containerRect.top,
+    });
+  }
+
+  function closeEditor() {
+    if (!editingId) return;
+    updateField(editingId, { text: editorValue });
+    // sync back to form fields when editing special fields
+    if (editingId === "certTitle") setCertTitle(editorValue);
+    if (editingId === "subtitle") setSubtitle(editorValue);
+    if (editingId === "description") setDescription(editorValue);
+    if (editingId === "issuer") setIssuerText(editorValue);
+    if (editingId === "date") {
+      // allow editing date line directly; try to parse "Date: X"
+      const m = editorValue.match(/date:\s*(.*)$/i);
+      if (m?.[1]) setDateText(m[1].trim());
+    }
+    if (editingId === "name" && inputMode === "manual") setManualName(editorValue);
+    if (editingId === "award" && inputMode === "manual") setManualAward(editorValue);
+
+    setEditingId("");
+    setEditorRect(null);
+  }
+
+  // Export: Build PDF client-side from EXACT stage render(s) => pixel-perfect
+  async function exportPdfPreview() {
+    setError("");
+    if (!selectedTemplate) return setError("No template selected.");
+    const effectiveRows =
+      inputMode === "manual"
+        ? [{ name: manualName, award: manualAward, date: dateText, issuer: issuerText }]
+        : rows;
+
+    if (!effectiveRows.length) return setError("Provide at least 1 recipient (manual or upload).");
+
+    const previewRows = effectiveRows.slice(0, MAX_PREVIEW);
+
+    setBusy(true);
+    try {
+      const pdfDoc = await PDFDocument.create();
+
+      for (let i = 0; i < previewRows.length; i++) {
+        const r = previewRows[i];
+
+        // Update canvas texts for this row (without changing layout)
+        setFields((prev) =>
+          prev.map((f) => {
+            if (f.id === "name") return { ...f, text: r.name || "" };
+            if (f.id === "award") return { ...f, text: r.award || "" };
+            if (f.id === "date") return { ...f, text: r.date ? `Date: ${r.date}` : "" };
+            if (f.id === "issuer") return { ...f, text: r.issuer || issuerText || "" };
+            return f;
+          })
+        );
+
+        // Wait a tick so Konva redraws before snapshot
+        await new Promise((res) => setTimeout(res, 30));
+
+        const stage = stageRef.current;
+        const dataUrl = stage.toDataURL({ pixelRatio: 2 }); // crisp
+        const pngBytes = await (await fetch(dataUrl)).arrayBuffer();
+
+        const page = pdfDoc.addPage([CW, CH]);
+        const img = await pdfDoc.embedPng(pngBytes);
+        page.drawImage(img, { x: 0, y: 0, width: CW, height: CH });
+      }
+
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "certificate_preview.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      // restore preview sample row after export
+      setTimeout(() => {
+        setFields((prev) =>
+          prev.map((f) => {
+            if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+            if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+            if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
+            if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
+            return f;
+          })
+        );
+      }, 0);
+    } catch (e) {
+      setError(String(e?.message || "Export failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Optional: ZIP PNGs (useful for batch)
+  async function exportPngZipPreview() {
+    setError("");
+    if (!selectedTemplate) return setError("No template selected.");
+    const effectiveRows =
+      inputMode === "manual"
+        ? [{ name: manualName, award: manualAward, date: dateText, issuer: issuerText }]
+        : rows;
+
+    if (!effectiveRows.length) return setError("Provide at least 1 recipient (manual or upload).");
+
+    const previewRows = effectiveRows.slice(0, MAX_PREVIEW);
+
+    setBusy(true);
+    try {
+      const zip = new JSZip();
+
+      for (let i = 0; i < previewRows.length; i++) {
+        const r = previewRows[i];
+
+        setFields((prev) =>
+          prev.map((f) => {
+            if (f.id === "name") return { ...f, text: r.name || "" };
+            if (f.id === "award") return { ...f, text: r.award || "" };
+            if (f.id === "date") return { ...f, text: r.date ? `Date: ${r.date}` : "" };
+            if (f.id === "issuer") return { ...f, text: r.issuer || issuerText || "" };
+            return f;
+          })
+        );
+
+        await new Promise((res) => setTimeout(res, 30));
+
+        const stage = stageRef.current;
+        const dataUrl = stage.toDataURL({ pixelRatio: 2 });
+        const bin = await (await fetch(dataUrl)).arrayBuffer();
+        zip.file(`certificate_${i + 1}.png`, bin);
+      }
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "certificates_preview.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      // restore preview
+      setTimeout(() => {
+        setFields((prev) =>
+          prev.map((f) => {
+            if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+            if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+            if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
+            if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
+            return f;
+          })
+        );
+      }, 0);
+    } catch (e) {
+      setError(String(e?.message || "Export failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---------- UI ----------
+  return (
+    <div style={styles.page}>
+      <div style={styles.header}>
+        <div>
+          <div style={styles.brand}>Certifyly</div>
+          <div style={styles.subbrand}>Editor</div>
+        </div>
+
+        <div style={styles.headerActions}>
+          <button onClick={exportPdfPreview} disabled={busy} style={busy ? styles.btnDisabled : styles.btnPrimary}>
+            {busy ? "Exporting…" : `Export PDF (max ${MAX_PREVIEW})`}
+          </button>
+          <button onClick={exportPngZipPreview} disabled={busy} style={busy ? styles.btnDisabled : styles.btnGhost}>
+            Export PNG ZIP
+          </button>
+        </div>
+      </div>
+
+      <div style={styles.grid}>
+        {/* LEFT PANEL */}
+        <div style={styles.panel}>
+          <div style={styles.panelTitle}>Inputs</div>
+
+          <div style={styles.block}>
+            <label style={styles.label}>Input mode</label>
+            <select style={styles.select} value={inputMode} onChange={(e) => setInputMode(e.target.value)}>
+              <option value="manual">Manual (single)</option>
+              <option value="upload">Upload CSV/TXT (batch)</option>
+            </select>
+          </div>
+
+          {inputMode === "manual" ? (
+            <>
+              <div style={styles.block}>
+                <label style={styles.label}>Name</label>
+                <input style={styles.input} value={manualName} onChange={(e) => setManualName(e.target.value)} />
+              </div>
+              <div style={styles.block}>
+                <label style={styles.label}>Title / Award</label>
+                <input style={styles.input} value={manualAward} onChange={(e) => setManualAward(e.target.value)} />
+              </div>
+            </>
+          ) : (
+            <div style={styles.block}>
+              <label style={styles.label}>Upload .csv or .txt</label>
+              <input
+                type="file"
+                accept=".csv,.txt,text/csv,text/plain"
+                onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
+              />
+              <div style={styles.help}>
+                CSV headers: <code>name,title</code> (optional <code>date</code>, <code>issuer</code>) • TXT:{" "}
+                <code>Name - Title</code>
+              </div>
+              {uploadFile && rows.length > 0 && <div style={styles.help}><b>Rows:</b> {rows.length} (preview shows first)</div>}
+            </div>
           )}
 
-          <div style={{ marginTop: 16 }}>
-            <label style={labelStyle}>Upload CSV batch (name, title)</label>
-            <input
-              type="file"
-              accept=".csv,.tsv,text/csv"
-              onChange={handleBatchUpload}
-              style={{ marginTop: 6 }}
-            />
-            <p style={helperTextStyle}>
-              CSV headers supported: name, title. TSV also accepted.
-            </p>
-          </div>
+          <div style={styles.hr} />
 
-          <div style={{ marginTop: 16 }}>
-            <h3 style={subTitleStyle}>Add a learner manually</h3>
-            <input
-              type="text"
-              value={manualName}
-              onChange={(event) => setManualName(event.target.value)}
-              placeholder="Learner name"
-              style={inputStyle}
-            />
-            <input
-              type="text"
-              value={manualTitle}
-              onChange={(event) => setManualTitle(event.target.value)}
-              placeholder="Award title (optional)"
-              style={inputStyle}
-            />
-            <button onClick={handleAddEntry} style={primaryButtonStyle}>
-              Add to batch
-            </button>
-          </div>
+          <div style={styles.panelTitle}>Template</div>
 
-          <div style={{ marginTop: 18 }}>
-            <h3 style={subTitleStyle}>Batch list ({entries.length})</h3>
-            <div style={listStyle}>
-              {entries.map((entry, index) => (
-                <div
-                  key={entry.id}
-                  style={{
-                    ...listItemStyle,
-                    border:
-                      activeEntryId === entry.id
-                        ? "1px solid #2563eb"
-                        : "1px solid #e2e8f0",
-                    background:
-                      activeEntryId === entry.id ? "#eff6ff" : "#f8fafc"
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setActiveEntryId(entry.id)}
-                    style={listButtonStyle}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>
-                      {index + 1}. {entry.name}
-                    </div>
-                    <div style={{ fontSize: 12, color: "#64748b" }}>
-                      {entry.title || "Participant"}
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveEntry(entry.id)}
-                    style={removeButtonStyle}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <button onClick={handleGeneratePdf} style={darkButtonStyle}>
-            Generate batch PDF
-          </button>
-        </section>
-
-        <section style={{ display: "grid", gap: 20 }}>
-          <div style={panelStyle}>
-            <h2 style={sectionTitleStyle}>Text Styling</h2>
-            <p style={helperTextStyle}>
-              Select a text field on the preview to adjust its font, size, color,
-              and placement.
-            </p>
-
-            <label style={labelStyle}>Selected field</label>
-            <select
-              value={selectedId ?? ""}
-              onChange={(event) => setSelectedId(event.target.value)}
-              style={inputStyle}
-            >
-              {!selectedId && (
-                <option value="" disabled>
-                  Select a field
-                </option>
-              )}
-              {fields.map((field) => (
-                <option key={field.id} value={field.id}>
-                  {field.label}
-                </option>
-              ))}
+          <div style={styles.block}>
+            <label style={styles.label}>Paper size</label>
+            <select style={styles.select} value={paper} onChange={(e) => setPaper(e.target.value)}>
+              <option value="A4">A4 (landscape)</option>
+              <option value="LETTER">US Letter (landscape)</option>
             </select>
+          </div>
 
-            {selectedField && (
-              <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-                <div>
-                  <label style={labelStyle}>Text content</label>
-                  <input
-                    type="text"
-                    value={selectedField.text}
-                    onChange={(event) =>
-                      handleFieldInput(selectedField.id, "text", event.target.value)
-                    }
-                    style={inputStyle}
-                  />
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div>
-                    <label style={labelStyle}>Font size</label>
-                    <input
-                      type="number"
-                      min="10"
-                      max="120"
-                      value={selectedField.fontSize}
-                      onChange={(event) =>
-                        handleFieldInput(
-                          selectedField.id,
-                          "fontSize",
-                          Number(event.target.value)
-                        )
-                      }
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Font style</label>
-                    <select
-                      value={selectedField.fontStyle}
-                      onChange={(event) =>
-                        handleFieldInput(
-                          selectedField.id,
-                          "fontStyle",
-                          event.target.value
-                        )
-                      }
-                      style={inputStyle}
-                    >
-                      <option value="normal">Regular</option>
-                      <option value="bold">Bold</option>
-                      <option value="italic">Italic</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label style={labelStyle}>Font family</label>
-                  <select
-                    value={selectedField.fontKey}
-                    onChange={(event) =>
-                      handleFontChange(selectedField.id, event.target.value)
-                    }
-                    style={inputStyle}
-                  >
-                    {FONT_OPTIONS.map((font) => (
-                      <option key={font.id} value={font.id}>
-                        {font.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div>
-                    <label style={labelStyle}>Text color</label>
-                    <input
-                      type="color"
-                      value={selectedField.fill}
-                      onChange={(event) =>
-                        handleFieldInput(selectedField.id, "fill", event.target.value)
-                      }
-                      style={{ ...inputStyle, padding: 6, height: 44 }}
-                    />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Alignment</label>
-                    <select
-                      value={selectedField.align}
-                      onChange={(event) =>
-                        handleFieldInput(selectedField.id, "align", event.target.value)
-                      }
-                      style={inputStyle}
-                    >
-                      <option value="left">Left</option>
-                      <option value="center">Center</option>
-                      <option value="right">Right</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div>
-                    <label style={labelStyle}>X position</label>
-                    <input
-                      type="number"
-                      value={Math.round(selectedField.x)}
-                      onChange={(event) =>
-                        handleFieldInput(
-                          selectedField.id,
-                          "x",
-                          Number(event.target.value)
-                        )
-                      }
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Y position</label>
-                    <input
-                      type="number"
-                      value={Math.round(selectedField.y)}
-                      onChange={(event) =>
-                        handleFieldInput(
-                          selectedField.id,
-                          "y",
-                          Number(event.target.value)
-                        )
-                      }
-                      style={inputStyle}
-                    />
-                  </div>
-                </div>
-              </div>
+          <div style={styles.block}>
+            <label style={styles.label}>Template</label>
+            {templatesLoading ? (
+              <div style={styles.help}>Loading templates…</div>
+            ) : templatesError ? (
+              <div style={{ ...styles.help, color: "#b42318" }}>{templatesError}</div>
+            ) : templates.length === 0 ? (
+              <div style={styles.help}>No templates found (R2: templates/templates/)</div>
+            ) : (
+              <select style={styles.select} value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
+                {templates.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
             )}
           </div>
 
-          <div>
-            <div style={{ marginBottom: 12 }}>
-              <h2 style={{ fontSize: 18, marginBottom: 4 }}>Live Preview</h2>
-              <p style={helperTextStyle}>
-                Previewing certificate for:{" "}
-                <strong>{activeEntry?.name ?? "No entry selected"}</strong>
-              </p>
+          <div style={styles.hr} />
+
+          <div style={styles.panelTitle}>Texts</div>
+
+          <div style={styles.block}>
+            <label style={styles.label}>Certificate Title</label>
+            <input style={styles.input} value={certTitle} onChange={(e) => setCertTitle(e.target.value)} />
+          </div>
+
+          <div style={styles.block}>
+            <label style={styles.label}>Free text (below title)</label>
+            <input style={styles.input} value={subtitle} onChange={(e) => setSubtitle(e.target.value)} placeholder="(optional)" />
+          </div>
+
+          <div style={styles.block}>
+            <label style={styles.label}>Free text (below name)</label>
+            <input
+              style={styles.input}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="(optional)"
+            />
+          </div>
+
+          <div style={styles.block}>
+            <label style={styles.label}>Date</label>
+            <input style={styles.input} value={dateText} onChange={(e) => setDateText(e.target.value)} />
+          </div>
+
+          <div style={styles.block}>
+            <label style={styles.label}>Issuer</label>
+            <input style={styles.input} value={issuerText} onChange={(e) => setIssuerText(e.target.value)} />
+          </div>
+
+          {error && <div style={styles.error}>{error}</div>}
+        </div>
+
+        {/* CANVAS */}
+        <div style={styles.canvasWrap}>
+          <div style={styles.canvasCard}>
+            <div style={styles.canvasTitleRow}>
+              <div>
+                <div style={styles.canvasTitle}>Live preview</div>
+                <div style={styles.canvasHint}>Click to select • drag to move • resize handles • double-click to edit</div>
+              </div>
+              <div style={styles.badge}>{paper}</div>
             </div>
-            <Stage
-              width={WIDTH}
-              height={HEIGHT}
-              ref={stageRef}
-              style={{
-                border: "1px solid #e2e8f0",
-                boxShadow: "0 20px 40px rgba(15, 23, 42, 0.12)",
-                borderRadius: 16,
-                background: "#ffffff",
-                margin: "0 auto"
-              }}
-              onMouseDown={(e) => {
-                if (e.target === e.target.getStage()) {
-                  setSelectedId(null);
-                }
-              }}
-            >
-              <Layer>
-                {bgImage && (
-                  <Image image={bgImage} width={WIDTH} height={HEIGHT} />
-                )}
 
-                {fields.map((field) => {
-                  const resolvedText =
-                    field.id === "recipientName"
-                      ? activeEntry?.name ?? field.text
-                      : field.id === "awardTitle"
-                        ? activeEntry?.title ?? field.text
-                        : field.text;
-                  const textWidth = getTextWidth(field, resolvedText);
+            <div style={styles.canvasStageOuter} ref={stageContainerRef}>
+              <Stage
+                width={CW}
+                height={CH}
+                ref={stageRef}
+                style={styles.stage}
+                onMouseDown={(e) => {
+                  if (e.target === e.target.getStage()) setSelectedId("");
+                }}
+              >
+                <Layer>
+                  {/* background */}
+                  {bg ? (
+                    (() => {
+                      const r = coverRect(bg.width, bg.height, CW, CH);
+                      return <KImage image={bg} x={r.x} y={r.y} width={r.w} height={r.h} listening={false} />;
+                    })()
+                  ) : (
+                    <KText text="Loading template…" x={20} y={20} fontFamily="Inter" fontSize={16} fill="#6b7280" />
+                  )}
 
-                  return (
-                    <Text
-                      key={field.id}
-                      id={field.id}
-                      {...field}
-                      text={resolvedText}
+                  {/* text fields */}
+                  {fields.map((f) => (
+                    <KText
+                      key={f.id}
+                      id={f.id}
+                      text={f.text || ""}
+                      x={f.x - (f.align === "center" ? f.width / 2 : f.align === "right" ? f.width : 0)}
+                      y={f.y}
+                      width={f.width}
+                      fontFamily={f.fontFamily}
+                      fontSize={f.fontSize}
+                      fontStyle={f.fontStyle}
+                      fill={f.fill}
+                      align={f.align}
                       draggable
-                      offsetX={
-                        field.align === "center"
-                          ? textWidth / 2
-                          : field.align === "right"
-                            ? textWidth
-                            : 0
-                      }
-                      onClick={() => setSelectedId(field.id)}
-                      onTap={() => setSelectedId(field.id)}
-                      onDragEnd={(e) =>
-                        updateField(field.id, {
-                          x: e.target.x(),
-                          y: e.target.y()
-                        })
-                      }
+                      onClick={() => setSelectedId(f.id)}
+                      onTap={() => setSelectedId(f.id)}
+                      onDblClick={() => openEditorFor(f.id)}
+                      onDblTap={() => openEditorFor(f.id)}
+                      onDragEnd={(e) => {
+                        const node = e.target;
+                        // keep y as top-left; store x as "anchor point"
+                        const newX =
+                          f.align === "center" ? node.x() + f.width / 2 : f.align === "right" ? node.x() + f.width : node.x();
+                        updateField(f.id, { x: newX, y: node.y() });
+                      }}
                       onTransformEnd={(e) => {
                         const node = e.target;
+                        const tr = transformerRef.current;
                         const scaleX = node.scaleX();
-                        updateField(field.id, {
-                          x: node.x(),
-                          y: node.y(),
-                          fontSize: Math.max(12, field.fontSize * scaleX)
-                        });
+                        const scaleY = node.scaleY();
+
+                        // Width resize using scaleX
+                        const nextWidth = Math.max(120, f.width * scaleX);
+
+                        // Font size resize using scaleY (vertical handles)
+                        const nextFontSize = clamp(f.fontSize * scaleY, 10, 120);
+
                         node.scaleX(1);
                         node.scaleY(1);
+
+                        const nx =
+                          f.align === "center" ? node.x() + nextWidth / 2 : f.align === "right" ? node.x() + nextWidth : node.x();
+
+                        updateField(f.id, {
+                          x: nx,
+                          y: node.y(),
+                          width: nextWidth,
+                          fontSize: nextFontSize,
+                        });
+
+                        tr?.getLayer()?.batchDraw();
                       }}
                     />
-                  );
-                })}
+                  ))}
 
-                {selectedId && (
                   <Transformer
                     ref={transformerRef}
-                    enabledAnchors={["middle-left", "middle-right"]}
                     rotateEnabled={false}
+                    enabledAnchors={[
+                      "middle-left",
+                      "middle-right",
+                      "top-left",
+                      "top-right",
+                      "bottom-left",
+                      "bottom-right",
+                    ]}
+                    boundBoxFunc={(oldBox, newBox) => {
+                      // Prevent flipping / too small
+                      if (newBox.width < 120) return oldBox;
+                      if (newBox.height < 20) return oldBox;
+                      return newBox;
+                    }}
                   />
-                )}
-              </Layer>
-            </Stage>
+                </Layer>
+              </Stage>
+
+              {/* Editable overlay */}
+              <TextEditorOverlay
+                open={!!editingId}
+                value={editorValue}
+                onChange={setEditorValue}
+                onClose={closeEditor}
+                stageContainerRef={stageContainerRef}
+                nodeAbsRect={editorRect}
+              />
+            </div>
           </div>
-        </section>
+        </div>
+
+        {/* INSPECTOR */}
+        <div style={styles.panel}>
+          <div style={styles.panelTitle}>Inspector</div>
+
+          {!selectedField ? (
+            <div style={styles.help}>Select a field on the template to edit style.</div>
+          ) : (
+            <>
+              <div style={styles.block}>
+                <div style={styles.pill}>Selected: {niceFieldLabel(selectedField.id)}</div>
+              </div>
+
+              <div style={styles.block}>
+                <label style={styles.label}>Text</label>
+                <input
+                  style={styles.input}
+                  value={selectedField.text}
+                  onChange={(e) => updateField(selectedField.id, { text: e.target.value })}
+                />
+                <div style={styles.help}>Tip: double-click on canvas to edit faster.</div>
+              </div>
+
+              <div style={styles.block}>
+                <label style={styles.label}>Font</label>
+                <select
+                  style={styles.select}
+                  value={selectedField.fontFamily}
+                  onChange={(e) => updateField(selectedField.id, { fontFamily: e.target.value })}
+                >
+                  {FONT_OPTIONS.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={styles.row2}>
+                <div style={styles.block}>
+                  <label style={styles.label}>Style</label>
+                  <select
+                    style={styles.select}
+                    value={selectedField.fontStyle}
+                    onChange={(e) => updateField(selectedField.id, { fontStyle: e.target.value })}
+                  >
+                    <option value="normal">Normal</option>
+                    <option value="bold">Bold</option>
+                    <option value="italic">Italic</option>
+                    <option value="bold italic">Bold Italic</option>
+                  </select>
+                </div>
+
+                <div style={styles.block}>
+                  <label style={styles.label}>Color</label>
+                  <input
+                    type="color"
+                    value={selectedField.fill}
+                    onChange={(e) => updateField(selectedField.id, { fill: e.target.value })}
+                    style={{ height: 42, borderRadius: 12, border: "1px solid rgba(0,0,0,0.15)", width: "100%" }}
+                  />
+                </div>
+              </div>
+
+              <div style={styles.block}>
+                <label style={styles.label}>Alignment</label>
+                <select
+                  style={styles.select}
+                  value={selectedField.align}
+                  onChange={(e) => updateField(selectedField.id, { align: e.target.value })}
+                >
+                  <option value="left">Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                </select>
+              </div>
+
+              <div style={styles.block}>
+                <label style={styles.label}>Font size</label>
+                <input
+                  type="range"
+                  min="10"
+                  max="120"
+                  value={selectedField.fontSize}
+                  onChange={(e) => updateField(selectedField.id, { fontSize: Number(e.target.value) })}
+                  style={{ width: "100%" }}
+                />
+                <div style={styles.help}>
+                  {selectedField.fontSize}px • Resize handles also work (width + size)
+                </div>
+              </div>
+
+              <div style={styles.block}>
+                <label style={styles.label}>Width (wrap area)</label>
+                <input
+                  type="range"
+                  min="120"
+                  max={Math.max(240, CW)}
+                  value={Math.round(selectedField.width)}
+                  onChange={(e) => updateField(selectedField.id, { width: Number(e.target.value) })}
+                  style={{ width: "100%" }}
+                />
+                <div style={styles.help}>{Math.round(selectedField.width)}px</div>
+              </div>
+
+              <button
+                style={styles.btnGhost}
+                onClick={() => {
+                  // reset selected field style only
+                  updateField(selectedField.id, {
+                    fontFamily: "Inter",
+                    fontStyle: selectedField.id === "certTitle" || selectedField.id === "name" || selectedField.id === "issuer" ? "bold" : "normal",
+                    fill: selectedField.id === "award" || selectedField.id === "subtitle" || selectedField.id === "description" || selectedField.id === "date" ? "#2b2f44" : "#1e2233",
+                  });
+                }}
+              >
+                Reset style (selected)
+              </button>
+            </>
+          )}
+
+          <div style={styles.hr} />
+          <div style={styles.help}>
+            Export is <b>pixel-perfect</b> because PDF is created from the same canvas render.
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function hexToRgb(hex) {
-  const sanitized = hex.replace("#", "");
-  const value = sanitized.length === 3
-    ? sanitized
-        .split("")
-        .map((char) => char + char)
-        .join("")
-    : sanitized;
-  const bigint = parseInt(value, 16);
-  const r = (bigint >> 16) & 255;
-  const g = (bigint >> 8) & 255;
-  const b = bigint & 255;
-  return { r: r / 255, g: g / 255, b: b / 255 };
-}
+// ---------- Styles (modern UI) ----------
+const styles = {
+  page: {
+    minHeight: "100vh",
+    background:
+      "radial-gradient(1200px 600px at 15% 10%, rgba(91,124,255,0.18), transparent 60%), radial-gradient(900px 500px at 85% 20%, rgba(255,138,76,0.16), transparent 55%), #0b1020",
+    color: "#eaf0ff",
+    padding: 22,
+    fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    padding: 18,
+    borderRadius: 18,
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 30px 60px rgba(0,0,0,0.35)",
+  },
+  brand: { fontSize: 22, fontWeight: 800, letterSpacing: 0.2 },
+  subbrand: { marginTop: 2, fontSize: 13, opacity: 0.85 },
+  headerActions: { display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" },
 
-function resolvePdfFontName(type, style) {
-  if (type === "mono") {
-    if (style === "bold") return StandardFonts.CourierBold;
-    if (style === "italic") return StandardFonts.CourierOblique;
-    return StandardFonts.Courier;
-  }
-  if (type === "serif") {
-    if (style === "bold") return StandardFonts.TimesBold;
-    if (style === "italic") return StandardFonts.TimesItalic;
-    return StandardFonts.TimesRoman;
-  }
-  if (style === "bold") return StandardFonts.HelveticaBold;
-  if (style === "italic") return StandardFonts.HelveticaOblique;
-  return StandardFonts.Helvetica;
-}
+  grid: {
+    marginTop: 16,
+    display: "grid",
+    gridTemplateColumns: "360px 1fr 360px",
+    gap: 16,
+    alignItems: "start",
+  },
 
-const panelStyle = {
-  background: "#ffffff",
-  borderRadius: 18,
-  padding: 20,
-  boxShadow: "0 16px 36px rgba(15, 23, 42, 0.08)",
-  border: "1px solid #e2e8f0"
-};
+  panel: {
+    padding: 16,
+    borderRadius: 18,
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 30px 60px rgba(0,0,0,0.35)",
+  },
+  panelTitle: { fontWeight: 800, fontSize: 14, letterSpacing: 0.6, opacity: 0.95, marginBottom: 12 },
 
-const sectionTitleStyle = {
-  fontSize: 18,
-  marginBottom: 12
-};
+  block: { marginBottom: 12 },
+  label: { display: "block", fontSize: 12, opacity: 0.9, marginBottom: 6 },
+  input: {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#eaf0ff",
+    outline: "none",
+  },
+  select: {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#eaf0ff",
+    outline: "none",
+  },
+  help: { fontSize: 12, opacity: 0.78, marginTop: 6, lineHeight: 1.3 },
+  hr: { height: 1, background: "rgba(255,255,255,0.10)", margin: "14px 0" },
+  error: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 12,
+    background: "rgba(180,35,24,0.12)",
+    border: "1px solid rgba(180,35,24,0.35)",
+    color: "#ffd7d2",
+    whiteSpace: "pre-wrap",
+    fontSize: 13,
+  },
 
-const subTitleStyle = {
-  fontSize: 14,
-  marginBottom: 8
-};
+  btnPrimary: {
+    padding: "11px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "linear-gradient(135deg, rgba(91,124,255,0.95), rgba(116,88,255,0.85))",
+    color: "white",
+    fontWeight: 800,
+    cursor: "pointer",
+    boxShadow: "0 16px 35px rgba(91,124,255,0.25)",
+  },
+  btnGhost: {
+    padding: "11px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#eaf0ff",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  btnDisabled: {
+    padding: "11px 14px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.10)",
+    color: "rgba(255,255,255,0.7)",
+    fontWeight: 800,
+    cursor: "not-allowed",
+  },
 
-const labelStyle = {
-  display: "block",
-  fontSize: 12,
-  fontWeight: 600,
-  color: "#6b7280",
-  textTransform: "uppercase",
-  letterSpacing: "0.06em"
-};
-
-const helperTextStyle = {
-  fontSize: 12,
-  color: "#94a3b8",
-  marginTop: 6
-};
-
-const inputStyle = {
-  width: "100%",
-  marginTop: 8,
-  padding: "10px 12px",
-  borderRadius: 12,
-  border: "1px solid #e2e8f0",
-  fontSize: 14,
-  background: "#f8fafc"
-};
-
-const listStyle = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-  maxHeight: 220,
-  overflowY: "auto",
-  paddingRight: 4
-};
-
-const listItemStyle = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  padding: "8px 10px",
-  borderRadius: 12
-};
-
-const listButtonStyle = {
-  background: "transparent",
-  border: "none",
-  textAlign: "left",
-  cursor: "pointer",
-  flex: 1
-};
-
-const removeButtonStyle = {
-  border: "none",
-  background: "transparent",
-  color: "#ef4444",
-  cursor: "pointer",
-  fontSize: 12
-};
-
-const primaryButtonStyle = {
-  marginTop: 10,
-  padding: "10px 16px",
-  background: "#2563eb",
-  color: "white",
-  border: "none",
-  borderRadius: 12,
-  cursor: "pointer",
-  width: "100%",
-  fontWeight: 600
-};
-
-const darkButtonStyle = {
-  marginTop: 20,
-  padding: "12px 16px",
-  background: "#0f172a",
-  color: "white",
-  border: "none",
-  borderRadius: 12,
-  cursor: "pointer",
-  width: "100%",
-  fontWeight: 600
+  canvasWrap: { minWidth: 0 },
+  canvasCard: {
+    padding: 16,
+    borderRadius: 18,
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    backdropFilter: "blur(10px)",
+    boxShadow: "0 30px 60px rgba(0,0,0,0.35)",
+  },
+  canvasTitleRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 },
+  canvasTitle: { fontSize: 14, fontWeight: 800, letterSpacing: 0.5 },
+  canvasHint: { marginTop: 4, fontSize: 12, opacity: 0.78 },
+  badge: {
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  canvasStageOuter: {
+    width: "100%",
+    display: "flex",
+    justifyContent: "center",
+    position: "relative",
+  },
+  stage: {
+    borderRadius: 14,
+    background: "rgba(255,255,255,0.02)",
+    border: "1px solid rgba(255,255,255,0.10)",
+    boxShadow: "0 25px 60px rgba(0,0,0,0.40)",
+    width: "100%",
+    maxWidth: 1100,
+    height: "auto",
+  },
+  row2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+  pill: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    background: "rgba(255,255,255,0.08)",
+    border: "1px solid rgba(255,255,255,0.12)",
+    fontSize: 12,
+    fontWeight: 800,
+  },
 };
