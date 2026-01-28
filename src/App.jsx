@@ -1,5 +1,4 @@
 // src/App.jsx
-// src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
@@ -965,3 +964,4 @@ export default function App() {
           <div className="card">
             <div className="cardHead">
               <h2>INSPECTOR</h2>
+
