@@ -1,6 +1,20 @@
 // src/App.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 
+/**
+ * Modern UI + Canvas editor
+ * - Templates loaded from /api/templates (R2)
+ * - Preview image loaded from /api/template?key=...
+ * - Click-to-select fields
+ * - Drag to move (when not editing)
+ * - Double-click or ✏️ to edit text
+ * - Right-side inspector for selected field (font/color/size/weight)
+ * - Still supports manual or upload CSV/TXT
+ *
+ * NOTE: This is UI-focused. It keeps your current PDF pipeline:
+ * - POST /api/preview with template_key, pos_json, style_json, etc.
+ */
+
 const FONT_OPTIONS = [
   { id: "helvetica", label: "Helvetica" },
   { id: "times", label: "Times" },
@@ -21,30 +35,6 @@ function fontFamilyFor(fontId) {
     default:
       return "Arial, Helvetica, sans-serif";
   }
-}
-
-// Paper sizes in PDF points (landscape)
-function pageSize(paper) {
-  return paper === "LETTER" ? { w: 792, h: 612 } : { w: 842, h: 595 };
-}
-
-// Shared: fit text size down until it fits maxWidth (px)
-function fitTextPx({ text, fontFamily, fontWeight, startPx, minPx, maxWidthPx }) {
-  const t = (text ?? "").toString();
-
-  // canvas text measurement
-  const canvas = fitTextPx._c || (fitTextPx._c = document.createElement("canvas"));
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return startPx;
-
-  let size = startPx;
-  while (size > minPx) {
-    ctx.font = `${fontWeight || 400} ${size}px ${fontFamily}`;
-    const w = ctx.measureText(t).width;
-    if (w <= maxWidthPx) break;
-    size -= 1;
-  }
-  return size;
 }
 
 function parseCsv(text) {
@@ -71,6 +61,7 @@ function parseCsv(text) {
     if (!name || !award) continue;
     rows.push({ name, award, date, issuer });
   }
+
   if (rows.length === 0) return { error: "No valid rows found (need name + title)." };
   return { rows };
 }
@@ -82,72 +73,38 @@ function parseTxt(text) {
   const rows = [];
   for (const line of lines) {
     const parts = line.split(" - ");
-    if (parts.length >= 2) {
-      rows.push({ name: parts[0].trim(), award: parts.slice(1).join(" - ").trim(), date: "", issuer: "" });
-    }
+    if (parts.length >= 2) rows.push({ name: parts[0].trim(), award: parts.slice(1).join(" - ").trim(), date: "", issuer: "" });
   }
   if (rows.length === 0) return { error: 'TXT lines must be like: "Name - Title"' };
   return { rows };
 }
 
-// Click-to-select, drag, resize handles, double-click to edit
-function DraggableResizableText({
+/** Canvas Field (click-to-select, drag-to-move, dblclick-to-edit) */
+function CanvasField({
   fieldKey,
   text,
   pos,
-  onPosChange,
-  onTextChange,
   selected,
   onSelect,
+  onPosChange,
+  onTextChange,
   style,
   previewBoxRef,
-  pxPerPt,
-  maxWidthRatio = 0.82,
 }) {
   const [dragging, setDragging] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [resizing, setResizing] = useState(false);
-
   const elRef = useRef(null);
 
-  // resize state
-  const resizeStart = useRef({
-    startX: 0,
-    startY: 0,
-    startSize: 0,
-    handle: "se",
-  });
-
   function pointerToPercent(clientX, clientY) {
-    const el = previewBoxRef.current;
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
+    const box = previewBoxRef.current;
+    if (!box) return null;
+    const rect = box.getBoundingClientRect();
     const px = (clientX - rect.left) / rect.width;
     const py = (clientY - rect.top) / rect.height;
     return { x: clamp(px, 0, 1), y: clamp(py, 0, 1) };
   }
 
-  const fontFamily = style?.fontFamily || "Arial, Helvetica, sans-serif";
-  const fontWeight = style?.fontWeight || 400;
-
-  const containerRect = previewBoxRef.current?.getBoundingClientRect();
-  const containerWpx = containerRect?.width || 1000;
-
-  // Start size in pt -> px
-  const startPt = Number(style?.sizePt || 16);
-  const startPx = startPt * pxPerPt;
-
-  // Auto-fit (preview) using same width ratio as PDF
-  const fittedPx = fitTextPx({
-    text,
-    fontFamily,
-    fontWeight,
-    startPx,
-    minPx: Math.max(10 * pxPerPt, 8),
-    maxWidthPx: containerWpx * maxWidthRatio,
-  });
-
-  function beginEdit() {
+  function startEditing() {
     setEditing(true);
     requestAnimationFrame(() => {
       const el = elRef.current;
@@ -162,46 +119,25 @@ function DraggableResizableText({
     });
   }
 
-  function endEdit(save = true) {
+  function stopEditing(save = true) {
     setEditing(false);
-    if (save) {
-      const v = (elRef.current?.innerText ?? "").toString();
-      onTextChange(fieldKey, v);
-    } else {
-      // revert
-      requestAnimationFrame(() => {
-        if (elRef.current) elRef.current.innerText = text || "";
-      });
-    }
+    const el = elRef.current;
+    if (!el) return;
+    if (save) onTextChange(fieldKey, (el.innerText ?? "").toString().replace(/\r/g, ""));
+    else el.innerText = text || "";
   }
 
   function onDown(e) {
-    // select on click
     onSelect(fieldKey);
-
-    if (editing || resizing) return;
-
-    // start drag
+    if (editing) return;
+    // allow clicking the edit button without starting drag
+    if (e.target?.dataset?.role === "editbtn") return;
     e.preventDefault();
     setDragging(true);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   }
 
   function onMove(e) {
-    if (resizing) {
-      const dx = e.clientX - resizeStart.current.startX;
-      const dy = e.clientY - resizeStart.current.startY;
-
-      // uniform scale based on diagonal movement
-      const delta = Math.max(dx, dy);
-      const scale = 1 + delta / 240; // tune sensitivity
-      const newSize = clamp(resizeStart.current.startSize * scale, 8, 120);
-
-      // NOTE: we pass back a “sizePt” update via custom event on style object
-      style?.onSizeChange?.(fieldKey, newSize);
-      return;
-    }
-
     if (!dragging) return;
     const p = pointerToPercent(e.clientX, e.clientY);
     if (p) onPosChange(fieldKey, p);
@@ -209,23 +145,7 @@ function DraggableResizableText({
 
   function onUp() {
     setDragging(false);
-    setResizing(false);
   }
-
-  function startResize(e, handle) {
-    e.preventDefault();
-    e.stopPropagation();
-    onSelect(fieldKey);
-    setResizing(true);
-    resizeStart.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      startSize: Number(style?.sizePt || 16),
-      handle,
-    };
-  }
-
-  const showFrame = selected && !editing;
 
   return (
     <div
@@ -233,32 +153,32 @@ function DraggableResizableText({
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerLeave={onUp}
-      onClick={(e) => {
-        e.stopPropagation();
-        onSelect(fieldKey);
-      }}
       onDoubleClick={(e) => {
         e.preventDefault();
-        e.stopPropagation();
-        onSelect(fieldKey);
-        beginEdit();
+        startEditing();
       }}
       style={{
         position: "absolute",
         left: `${pos.x * 100}%`,
         top: `${pos.y * 100}%`,
         transform: "translate(-50%, -50%)",
-        cursor: editing ? "text" : resizing ? "nwse-resize" : dragging ? "grabbing" : "grab",
-        padding: "6px 10px",
-        borderRadius: 10,
-        background: editing ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.18)",
-        border: showFrame ? "2px solid rgba(0, 120, 255, 0.85)" : "1px dashed rgba(0,0,0,0.22)",
-        boxShadow: showFrame ? "0 10px 25px rgba(0,0,0,0.12)" : "none",
-        touchAction: "none",
+        cursor: editing ? "text" : dragging ? "grabbing" : "grab",
+        padding: "8px 10px",
+        borderRadius: 12,
+        background: selected
+          ? "rgba(255,255,255,0.72)"
+          : "rgba(255,255,255,0.18)",
+        border: selected
+          ? "1px solid rgba(120, 140, 255, 0.55)"
+          : "1px dashed rgba(255,255,255,0.35)",
+        boxShadow: selected ? "0 12px 28px rgba(0,0,0,0.12)" : "none",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
         userSelect: editing ? "text" : "none",
+        touchAction: "none",
         whiteSpace: "nowrap",
-        outline: "none",
-        pointerEvents: "auto",
+        maxWidth: "92%",
+        ...style,
       }}
       title={editing ? "Editing… click outside to save" : "Click to select • Drag to move • Double-click to edit"}
     >
@@ -267,7 +187,7 @@ function DraggableResizableText({
         contentEditable={editing}
         suppressContentEditableWarning
         spellCheck={false}
-        onBlur={() => endEdit(true)}
+        onBlur={() => stopEditing(true)}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
@@ -275,108 +195,122 @@ function DraggableResizableText({
           }
           if (e.key === "Escape") {
             e.preventDefault();
-            endEdit(false);
+            stopEditing(false);
           }
         }}
         style={{
+          outline: "none",
           pointerEvents: editing ? "auto" : "none",
-          fontFamily,
-          fontWeight,
-          fontSize: `${fittedPx}px`,
-          color: style?.color || "#222",
         }}
       >
         {text || " "}
       </div>
 
-      {/* Resize handles */}
-      {selected && !editing && (
-        <>
-          {/* SE handle */}
-          <div
-            onPointerDown={(e) => startResize(e, "se")}
-            style={{
-              position: "absolute",
-              right: -8,
-              bottom: -8,
-              width: 14,
-              height: 14,
-              borderRadius: 4,
-              background: "rgba(0, 120, 255, 0.95)",
-              border: "2px solid white",
-              cursor: "nwse-resize",
-            }}
-            title="Resize"
-          />
-          {/* Optional: NW handle */}
-          <div
-            onPointerDown={(e) => startResize(e, "nw")}
-            style={{
-              position: "absolute",
-              left: -8,
-              top: -8,
-              width: 14,
-              height: 14,
-              borderRadius: 4,
-              background: "rgba(0, 120, 255, 0.95)",
-              border: "2px solid white",
-              cursor: "nwse-resize",
-            }}
-            title="Resize"
-          />
-        </>
+      {!editing && (
+        <button
+          type="button"
+          data-role="editbtn"
+          onClick={(e) => {
+            e.stopPropagation();
+            startEditing();
+          }}
+          style={{
+            marginLeft: 10,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "4px 8px",
+            borderRadius: 10,
+            border: "1px solid rgba(0,0,0,0.08)",
+            background: selected ? "rgba(120,140,255,0.12)" : "rgba(255,255,255,0.5)",
+            cursor: "pointer",
+            fontSize: 12,
+            color: "rgba(20,20,30,0.9)",
+          }}
+          title="Edit"
+        >
+          ✏️ <span style={{ opacity: 0.75 }}>Edit</span>
+        </button>
       )}
     </div>
   );
 }
 
+function prettyFieldName(k) {
+  switch (k) {
+    case "certTitle":
+      return "Certificate Title";
+    case "subtitle":
+      return "Subtitle (under title)";
+    case "name":
+      return "Name";
+    case "description":
+      return "Description (under name)";
+    case "award":
+      return "Award / Title";
+    case "date":
+      return "Date";
+    case "issuer":
+      return "Issuer";
+    default:
+      return k;
+  }
+}
+
 export default function App() {
-  const [inputMode, setInputMode] = useState("manual");
+  const [error, setError] = useState("");
 
-  const [templates, setTemplates] = useState([]); // [{id,label,key}]
+  // templates from R2
+  const [templates, setTemplates] = useState([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
+  const [templateId, setTemplateId] = useState("");
+  const selectedTemplate = useMemo(() => templates.find((t) => t.id === templateId) || null, [templates, templateId]);
+  const templateKey = selectedTemplate?.key || "";
+  const previewImageUrl = templateKey ? `/api/template?key=${encodeURIComponent(templateKey)}` : "";
 
+  // input mode + data
+  const [inputMode, setInputMode] = useState("manual"); // manual | upload
   const [uploadFile, setUploadFile] = useState(null);
   const [rows, setRows] = useState([]);
-  const [error, setError] = useState("");
 
   const [manualName, setManualName] = useState("Student Name");
   const [manualAward, setManualAward] = useState("For outstanding performance");
 
-  const [templateId, setTemplateId] = useState("");
   const [paper, setPaper] = useState("A4");
   const [busy, setBusy] = useState(false);
 
-  // Editable fields (on template)
+  // on-canvas text fields
   const [certTitle, setCertTitle] = useState("Certificate of Achievement");
   const [subtitle, setSubtitle] = useState("Presented to");
   const [description, setDescription] = useState("For outstanding effort and dedication");
   const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
   const [issuer, setIssuer] = useState("Issuer / Organization");
 
-  // Positions (%)
+  // selection + inspector
+  const FIELD_KEYS = useMemo(() => ["certTitle", "subtitle", "name", "description", "award", "date", "issuer"], []);
+  const [selectedKey, setSelectedKey] = useState("certTitle");
+
+  // positions (normalized 0..1)
   const [pos, setPos] = useState({
     certTitle: { x: 0.5, y: 0.18 },
     subtitle: { x: 0.5, y: 0.26 },
     name: { x: 0.5, y: 0.42 },
     description: { x: 0.5, y: 0.48 },
     award: { x: 0.5, y: 0.54 },
-    date: { x: 0.12, y: 0.92 },
-    issuer: { x: 0.82, y: 0.88 },
+    date: { x: 0.10, y: 0.92 },
+    issuer: { x: 0.80, y: 0.88 },
   });
 
-  // Style per field: font + color + size (pt)
+  // style per field
   const [styleByField, setStyleByField] = useState({
-    certTitle: { font: "helvetica", color: "#2a2a2a", size: 38 },
-    subtitle: { font: "helvetica", color: "#3a3a3a", size: 18 },
-    name: { font: "helvetica", color: "#2a2a2a", size: 34 },
-    description: { font: "helvetica", color: "#3a3a3a", size: 16 },
-    award: { font: "helvetica", color: "#3a3a3a", size: 18 },
-    date: { font: "helvetica", color: "#3a3a3a", size: 12 },
-    issuer: { font: "helvetica", color: "#2a2a2a", size: 14 },
+    certTitle: { font: "helvetica", color: "#1e2233", size: 40, weight: 800 },
+    subtitle: { font: "helvetica", color: "#2b2f44", size: 18, weight: 500 },
+    name: { font: "helvetica", color: "#1e2233", size: 32, weight: 800 },
+    description: { font: "helvetica", color: "#2b2f44", size: 16, weight: 400 },
+    award: { font: "helvetica", color: "#2b2f44", size: 18, weight: 600 },
+    date: { font: "helvetica", color: "#2b2f44", size: 12, weight: 600 },
+    issuer: { font: "helvetica", color: "#1e2233", size: 14, weight: 700 },
   });
-
-  const [selectedField, setSelectedField] = useState(null);
 
   const previewBoxRef = useRef(null);
 
@@ -390,8 +324,7 @@ export default function App() {
         const data = await res.json();
         const list = Array.isArray(data?.templates) ? data.templates : [];
         setTemplates(list);
-        if (list.length) setTemplateId((prev) => prev || list[0].id);
-        else setTemplateId("");
+        setTemplateId((prev) => prev || (list[0]?.id ?? ""));
       } catch (e) {
         setError(e?.message ? String(e.message) : "Failed to load templates.");
       } finally {
@@ -400,18 +333,8 @@ export default function App() {
     })();
   }, []);
 
-  const selectedTemplate = useMemo(
-    () => templates.find((t) => t.id === templateId) || null,
-    [templates, templateId]
-  );
-
-  const templateKey = selectedTemplate?.key || "";
-  const previewImageUrl = templateKey ? `/api/template?key=${encodeURIComponent(templateKey)}` : "";
-
   const sampleRow = useMemo(() => {
-    if (inputMode === "manual") {
-      return { name: manualName, award: manualAward, date: dateText, issuer };
-    }
+    if (inputMode === "manual") return { name: manualName, award: manualAward, date: dateText, issuer };
     return rows[0] || { name: "Student Name", award: "For outstanding performance", date: dateText, issuer };
   }, [inputMode, manualName, manualAward, rows, dateText, issuer]);
 
@@ -424,13 +347,14 @@ export default function App() {
   }
 
   function updateText(fieldKey, value) {
-    const v = (value ?? "").toString().replace(/\r/g, "").trim();
-
+    const v = (value ?? "").toString().replace(/\r/g, "");
     if (fieldKey === "certTitle") setCertTitle(v);
     if (fieldKey === "subtitle") setSubtitle(v);
-    if (fieldKey === "name") setManualName(v);
     if (fieldKey === "description") setDescription(v);
+
+    if (fieldKey === "name") setManualName(v);
     if (fieldKey === "award") setManualAward(v);
+
     if (fieldKey === "date") setDateText(v.replace(/^Date:\s*/i, "").trim());
     if (fieldKey === "issuer") setIssuer(v);
   }
@@ -438,10 +362,8 @@ export default function App() {
   async function handleUpload(file) {
     setUploadFile(file);
     setError("");
-
     const text = await file.text();
     let parsed;
-
     if (file.name.toLowerCase().endsWith(".csv")) parsed = parseCsv(text);
     else if (file.name.toLowerCase().endsWith(".txt")) parsed = parseTxt(text);
     else parsed = { error: "Upload a .csv or .txt file." };
@@ -468,7 +390,6 @@ export default function App() {
     setBusy(true);
     try {
       const form = new FormData();
-
       form.append("rows_json", JSON.stringify(effectiveRows));
       form.append("template_key", templateKey);
       form.append("paper_size", paper);
@@ -476,10 +397,14 @@ export default function App() {
       form.append("certificate_title", certTitle);
       form.append("subtitle", subtitle);
       form.append("description", description);
+
       form.append("date_text", dateText);
       form.append("issuer", issuer);
 
       form.append("pos_json", JSON.stringify(pos));
+
+      // Send style_json – keep only what backend expects (font + color).
+      // If your backend also supports size/weight later, keep them too.
       form.append("style_json", JSON.stringify(styleByField));
 
       const res = await fetch("/api/preview", { method: "POST", body: form });
@@ -487,7 +412,6 @@ export default function App() {
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-
       const a = document.createElement("a");
       a.href = url;
       a.download = "certificate_preview.pdf";
@@ -502,387 +426,580 @@ export default function App() {
     }
   }
 
-  const { w: pageW, h: pageH } = pageSize(paper);
+  const inspectorStyle = styleByField[selectedKey] || styleByField.certTitle;
 
-  // px-per-pt based on container width
-  const [pxPerPt, setPxPerPt] = useState(1.0);
+  function getFieldText(fieldKey) {
+    if (fieldKey === "certTitle") return certTitle;
+    if (fieldKey === "subtitle") return subtitle;
+    if (fieldKey === "description") return description;
 
-  useEffect(() => {
-    function recalc() {
-      const el = previewBoxRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      if (!rect.width) return;
-      setPxPerPt(rect.width / pageW); // 1pt -> px scale
-    }
-    recalc();
-    window.addEventListener("resize", recalc);
-    return () => window.removeEventListener("resize", recalc);
-  }, [paper, pageW]);
-
-  function sizeChange(fieldKey, newSizePt) {
-    updateStyle(fieldKey, { size: newSizePt });
+    if (fieldKey === "name") return sampleRow.name;
+    if (fieldKey === "award") return sampleRow.award;
+    if (fieldKey === "date") return dateText ? `Date: ${dateText}` : "Date: ____-__-__";
+    if (fieldKey === "issuer") return issuer || "Issuer / Organization";
+    return "";
   }
 
-  const fieldList = ["certTitle", "subtitle", "name", "description", "award", "date", "issuer"];
-
-  function prettyFieldName(k) {
-    switch (k) {
-      case "certTitle":
-        return "Certificate Title";
-      case "subtitle":
-        return "Subtitle (under title)";
-      case "name":
-        return "Name";
-      case "description":
-        return "Description (under name)";
-      case "award":
-        return "Title / Award";
-      case "date":
-        return "Date";
-      case "issuer":
-        return "Issuer";
-      default:
-        return k;
-    }
-  }
+  const canvasFields = [
+    {
+      key: "certTitle",
+      text: certTitle,
+      style: {
+        fontFamily: fontFamilyFor(styleByField.certTitle.font),
+        fontWeight: styleByField.certTitle.weight ?? 800,
+        fontSize: `clamp(18px, 3.2vw, ${styleByField.certTitle.size ?? 42}px)`,
+        color: styleByField.certTitle.color,
+      },
+    },
+    {
+      key: "subtitle",
+      text: subtitle,
+      style: {
+        fontFamily: fontFamilyFor(styleByField.subtitle.font),
+        fontWeight: styleByField.subtitle.weight ?? 500,
+        fontSize: `clamp(12px, 1.8vw, ${styleByField.subtitle.size ?? 20}px)`,
+        color: styleByField.subtitle.color,
+      },
+    },
+    {
+      key: "name",
+      text: sampleRow.name,
+      style: {
+        fontFamily: fontFamilyFor(styleByField.name.font),
+        fontWeight: styleByField.name.weight ?? 800,
+        fontSize: `clamp(14px, 2.6vw, ${styleByField.name.size ?? 30}px)`,
+        color: styleByField.name.color,
+      },
+    },
+    {
+      key: "description",
+      text: description,
+      style: {
+        fontFamily: fontFamilyFor(styleByField.description.font),
+        fontWeight: styleByField.description.weight ?? 400,
+        fontSize: `clamp(12px, 1.6vw, ${styleByField.description.size ?? 18}px)`,
+        color: styleByField.description.color,
+      },
+    },
+    {
+      key: "award",
+      text: sampleRow.award,
+      style: {
+        fontFamily: fontFamilyFor(styleByField.award.font),
+        fontWeight: styleByField.award.weight ?? 600,
+        fontSize: `clamp(12px, 1.6vw, ${styleByField.award.size ?? 18}px)`,
+        color: styleByField.award.color,
+      },
+    },
+    {
+      key: "date",
+      text: dateText ? `Date: ${dateText}` : "Date: ____-__-__",
+      style: {
+        fontFamily: fontFamilyFor(styleByField.date.font),
+        fontWeight: styleByField.date.weight ?? 600,
+        fontSize: `clamp(10px, 1.2vw, ${styleByField.date.size ?? 14}px)`,
+        color: styleByField.date.color,
+      },
+    },
+    {
+      key: "issuer",
+      text: issuer || "Issuer / Organization",
+      style: {
+        fontFamily: fontFamilyFor(styleByField.issuer.font),
+        fontWeight: styleByField.issuer.weight ?? 700,
+        fontSize: `clamp(10px, 1.3vw, ${styleByField.issuer.size ?? 16}px)`,
+        color: styleByField.issuer.color,
+      },
+    },
+  ];
 
   return (
-    <div style={{ padding: 40, fontFamily: "system-ui" }}>
-      <h1>Certificate Generator</h1>
+    <>
+      {/* Global styles */}
+      <style>{`
+        :root{
+          --bg1:#0b1020;
+          --bg2:#0f1630;
+          --card: rgba(255,255,255,0.08);
+          --card2: rgba(255,255,255,0.06);
+          --stroke: rgba(255,255,255,0.10);
+          --stroke2: rgba(255,255,255,0.14);
+          --txt: rgba(255,255,255,0.92);
+          --muted: rgba(255,255,255,0.68);
+          --muted2: rgba(255,255,255,0.52);
+          --accent: #7b8cff;
+          --accent2:#52e0c4;
+          --danger:#ff5c7a;
+          --shadow: 0 18px 55px rgba(0,0,0,0.38);
+        }
+        *{ box-sizing:border-box; }
+        body{
+          margin:0;
+          background:
+            radial-gradient(1200px 800px at 20% -10%, rgba(123,140,255,0.35), transparent 60%),
+            radial-gradient(1000px 700px at 80% 0%, rgba(82,224,196,0.22), transparent 55%),
+            radial-gradient(900px 700px at 50% 110%, rgba(255,92,122,0.14), transparent 60%),
+            linear-gradient(180deg, var(--bg1), var(--bg2));
+          color: var(--txt);
+          font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+        }
+        a{ color: inherit; }
+        .app-wrap{ max-width: 1420px; margin: 0 auto; padding: 22px; }
+        .topbar{
+          display:flex; align-items:center; justify-content:space-between;
+          padding: 14px 16px;
+          border-radius: 18px;
+          background: linear-gradient(180deg, rgba(255,255,255,0.09), rgba(255,255,255,0.06));
+          border: 1px solid var(--stroke);
+          box-shadow: var(--shadow);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+        }
+        .brand{
+          display:flex; gap:12px; align-items:center;
+        }
+        .logo{
+          width:40px; height:40px; border-radius:14px;
+          background: radial-gradient(circle at 30% 30%, rgba(123,140,255,0.95), rgba(82,224,196,0.75));
+          box-shadow: 0 10px 25px rgba(123,140,255,0.25);
+        }
+        .h1{ font-size:16px; font-weight:800; letter-spacing:0.2px; margin:0; }
+        .sub{ font-size:12px; color: var(--muted); margin:2px 0 0; }
 
-      <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "420px 1fr", gap: 18 }}>
-        {/* CONTROLS */}
-        <div style={{ padding: 20, border: "1px solid #ddd", borderRadius: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Inputs</h2>
+        .layout{
+          margin-top: 16px;
+          display:grid;
+          grid-template-columns: 380px 1fr 340px;
+          gap: 14px;
+        }
+        @media (max-width: 1200px){
+          .layout{ grid-template-columns: 1fr; }
+        }
 
-          <div style={{ marginBottom: 12 }}>
-            <label><b>Input mode</b></label><br />
-            <select value={inputMode} onChange={(e) => setInputMode(e.target.value)} style={{ width: "100%" }}>
-              <option value="manual">Manual (single certificate)</option>
-              <option value="upload">Upload CSV/TXT (batch)</option>
-            </select>
-          </div>
+        .card{
+          border-radius: 18px;
+          border: 1px solid var(--stroke);
+          background: linear-gradient(180deg, var(--card), var(--card2));
+          box-shadow: var(--shadow);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          overflow:hidden;
+        }
+        .card-h{
+          padding: 14px 14px 10px;
+          border-bottom: 1px solid rgba(255,255,255,0.08);
+          display:flex; justify-content:space-between; align-items:center;
+        }
+        .card-h h2{
+          margin:0;
+          font-size: 13px;
+          letter-spacing:0.3px;
+          font-weight: 800;
+          color: rgba(255,255,255,0.88);
+        }
+        .card-b{ padding: 14px; }
 
-          {inputMode === "manual" ? (
-            <>
-              <div style={{ marginBottom: 12 }}>
-                <label><b>Name</b></label><br />
-                <input
-                  value={manualName}
-                  onChange={(e) => setManualName(e.target.value)}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
-                />
-              </div>
-              <div style={{ marginBottom: 12 }}>
-                <label><b>Title / Award</b></label><br />
-                <input
-                  value={manualAward}
-                  onChange={(e) => setManualAward(e.target.value)}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #ccc" }}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ marginBottom: 12 }}>
-                <label><b>Upload .csv or .txt</b></label><br />
-                <input
-                  type="file"
-                  accept=".csv,.txt,text/csv,text/plain"
-                  onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
-                />
-                <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-                  CSV headers: <code>name,title</code> (optional: <code>date</code>, <code>issuer</code>)<br />
-                  TXT lines: <code>Name - Title</code>
-                </div>
-                {uploadFile && rows.length > 0 && (
-                  <div style={{ marginTop: 8, fontSize: 12 }}>
-                    <b>Rows:</b> {rows.length} (previewing first row on the right)
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+        .seg{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          border: 1px solid rgba(255,255,255,0.12);
+          border-radius: 14px;
+          overflow:hidden;
+        }
+        .seg button{
+          padding:10px 10px;
+          background: transparent;
+          border:0;
+          color: var(--muted);
+          cursor:pointer;
+          font-weight: 700;
+          font-size: 12px;
+        }
+        .seg button.active{
+          background: rgba(123,140,255,0.16);
+          color: rgba(255,255,255,0.92);
+        }
 
-          <h2 style={{ marginTop: 16 }}>Template</h2>
-          <div style={{ marginBottom: 12 }}>
-            <label><b>Template</b></label><br />
-            <select
-              value={templateId}
-              onChange={(e) => setTemplateId(e.target.value)}
-              style={{ width: "100%" }}
-              disabled={templatesLoading || templates.length === 0}
-            >
-              {templatesLoading ? (
-                <option>Loading templates…</option>
-              ) : templates.length === 0 ? (
-                <option>No templates found</option>
-              ) : (
-                templates.map((t) => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
-                ))
-              )}
-            </select>
-            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-              Templates are loaded from R2 folder: <code>templates/</code>
+        .row{ display:grid; gap:10px; margin-top: 12px; }
+        label{ font-size:12px; color: var(--muted); display:block; margin-bottom:6px; }
+        input, select{
+          width:100%;
+          padding: 11px 12px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.12);
+          background: rgba(10,14,28,0.55);
+          color: rgba(255,255,255,0.92);
+          outline:none;
+        }
+        input::placeholder{ color: rgba(255,255,255,0.35); }
+        .hint{ font-size: 11px; color: var(--muted2); line-height: 1.35; }
+
+        .btn{
+          width:100%;
+          padding: 12px 14px;
+          border-radius: 16px;
+          border: 1px solid rgba(255,255,255,0.14);
+          background: linear-gradient(180deg, rgba(123,140,255,0.9), rgba(123,140,255,0.65));
+          color: rgba(255,255,255,0.96);
+          font-weight: 900;
+          cursor:pointer;
+          box-shadow: 0 14px 35px rgba(123,140,255,0.25);
+        }
+        .btn:disabled{ opacity:0.65; cursor:not-allowed; }
+        .btn.secondary{
+          background: rgba(255,255,255,0.08);
+          box-shadow:none;
+        }
+
+        .pill{
+          display:inline-flex;
+          align-items:center;
+          gap:8px;
+          padding: 8px 10px;
+          border-radius: 999px;
+          border:1px solid rgba(255,255,255,0.12);
+          background: rgba(255,255,255,0.06);
+          font-size: 12px;
+          color: var(--muted);
+        }
+        .err{
+          margin-top: 10px;
+          padding: 10px 12px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,92,122,0.35);
+          background: rgba(255,92,122,0.10);
+          color: rgba(255,255,255,0.92);
+          font-size: 12px;
+          white-space: pre-wrap;
+        }
+
+        .canvas-wrap{
+          padding: 14px;
+        }
+        .canvas-box{
+          position:relative;
+          width:100%;
+          border-radius: 18px;
+          border: 1px solid rgba(255,255,255,0.10);
+          overflow:hidden;
+          background: rgba(0,0,0,0.18);
+          box-shadow: 0 18px 55px rgba(0,0,0,0.35);
+        }
+        .canvas-img{
+          width: 100%;
+          display:block;
+          height:auto;
+        }
+        .canvas-empty{
+          height: 520px;
+          display:grid;
+          place-items:center;
+          color: var(--muted);
+        }
+
+        .fieldlist{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        .fieldbtn{
+          padding: 10px 10px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.10);
+          background: rgba(255,255,255,0.04);
+          color: rgba(255,255,255,0.85);
+          cursor:pointer;
+          text-align:left;
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+        }
+        .fieldbtn.active{
+          border-color: rgba(123,140,255,0.35);
+          background: rgba(123,140,255,0.12);
+        }
+        .mini{ font-size: 11px; color: var(--muted2); }
+
+        .two{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+        .slider{
+          width:100%;
+        }
+        .kbd{
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          font-size: 11px;
+          padding: 2px 6px;
+          border-radius: 8px;
+          border:1px solid rgba(255,255,255,0.14);
+          background: rgba(255,255,255,0.06);
+          color: rgba(255,255,255,0.85);
+        }
+      `}</style>
+
+      <div className="app-wrap">
+        <div className="topbar">
+          <div className="brand">
+            <div className="logo" />
+            <div>
+              <p className="h1">Certifyly Studio</p>
+              <p className="sub">Modern certificate editor — click, drag, edit inline</p>
             </div>
           </div>
 
-          <div style={{ marginBottom: 12 }}>
-            <label><b>Paper size</b></label><br />
-            <select value={paper} onChange={(e) => setPaper(e.target.value)} style={{ width: "100%" }}>
-              <option value="A4">A4 (landscape)</option>
-              <option value="LETTER">US Letter (landscape)</option>
-            </select>
-          </div>
-
-          <h2 style={{ marginTop: 16 }}>Font, color, size</h2>
-          {fieldList.map((k) => (
-            <div key={k} style={{ marginBottom: 10, padding: 10, border: "1px solid #eee", borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>{prettyFieldName(k)}</div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 120px", gap: 10, marginBottom: 8 }}>
-                <select value={styleByField[k].font} onChange={(e) => updateStyle(k, { font: e.target.value })}>
-                  {FONT_OPTIONS.map((f) => (
-                    <option key={f.id} value={f.id}>{f.label}</option>
-                  ))}
-                </select>
-
-                <input
-                  type="color"
-                  value={styleByField[k].color}
-                  onChange={(e) => updateStyle(k, { color: e.target.value })}
-                  style={{ height: 38 }}
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 70px", gap: 10, alignItems: "center" }}>
-                <input
-                  type="range"
-                  min={8}
-                  max={90}
-                  step={1}
-                  value={Math.round(styleByField[k].size)}
-                  onChange={(e) => updateStyle(k, { size: Number(e.target.value) })}
-                />
-                <div style={{ fontSize: 12, opacity: 0.75, textAlign: "right" }}>
-                  {Math.round(styleByField[k].size)} pt
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {error && <div style={{ color: "red", marginTop: 10, whiteSpace: "pre-wrap" }}>{error}</div>}
-
-          <button
-            onClick={generatePreviewPdf}
-            disabled={busy || templatesLoading || !templateKey}
-            style={{
-              marginTop: 14,
-              width: "100%",
-              padding: "12px 16px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#000",
-              color: "#fff",
-              cursor: "pointer",
-              opacity: busy || templatesLoading || !templateKey ? 0.7 : 1,
-            }}
-          >
-            {busy ? "Generating…" : "Generate Preview PDF"}
-          </button>
-
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            Preview rules: Click to select • Drag to move • Resize with handles • Double-click to edit.
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <span className="pill">
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "rgba(82,224,196,0.9)" }} />
+              Templates: {templatesLoading ? "Loading…" : templates.length}
+            </span>
+            <span className="pill">
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "rgba(123,140,255,0.9)" }} />
+              Selected: {prettyFieldName(selectedKey)}
+            </span>
           </div>
         </div>
 
-        {/* PREVIEW */}
-        <div
-          style={{ padding: 20, border: "1px solid #ddd", borderRadius: 12 }}
-          onClick={() => setSelectedField(null)}
-        >
-          <h2 style={{ marginTop: 0 }}>Live preview (matches PDF export)</h2>
-
-          {/* Paper aspect container (matches PDF page) */}
-          <div
-            ref={previewBoxRef}
-            style={{
-              position: "relative",
-              width: "100%",
-              maxWidth: 1200,
-              aspectRatio: `${pageW} / ${pageH}`,
-              borderRadius: 12,
-              overflow: "hidden",
-              boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
-              background: "#f3f3f3",
-            }}
-          >
-            {previewImageUrl ? (
-              <img
-                src={previewImageUrl}
-                alt="Certificate template preview"
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover", // IMPORTANT: matches PDF background cover crop
-                }}
-              />
-            ) : (
-              <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#666" }}>
-                {templatesLoading ? "Loading templates…" : "No template preview available"}
+        <div className="layout">
+          {/* LEFT: Data & template settings */}
+          <div className="card">
+            <div className="card-h">
+              <h2>DATA & TEMPLATE</h2>
+              <span className="kbd">Drag • Double-click edit</span>
+            </div>
+            <div className="card-b">
+              <div className="seg">
+                <button className={inputMode === "manual" ? "active" : ""} onClick={() => setInputMode("manual")}>
+                  Manual
+                </button>
+                <button className={inputMode === "upload" ? "active" : ""} onClick={() => setInputMode("upload")}>
+                  Upload
+                </button>
               </div>
-            )}
 
-            <DraggableResizableText
-              fieldKey="certTitle"
-              text={certTitle}
-              pos={pos.certTitle}
-              onPosChange={updatePos}
-              onTextChange={updateText}
-              selected={selectedField === "certTitle"}
-              onSelect={setSelectedField}
-              previewBoxRef={previewBoxRef}
-              pxPerPt={pxPerPt}
-              maxWidthRatio={0.82}
-              style={{
-                fontFamily: fontFamilyFor(styleByField.certTitle.font),
-                fontWeight: 800,
-                color: styleByField.certTitle.color,
-                sizePt: styleByField.certTitle.size,
-                onSizeChange: sizeChange,
-              }}
-            />
+              <div className="row">
+                {inputMode === "manual" ? (
+                  <>
+                    <div>
+                      <label>Name</label>
+                      <input value={manualName} onChange={(e) => setManualName(e.target.value)} />
+                      <div className="hint">Used for the “Name” field. You can also edit it directly on the canvas.</div>
+                    </div>
+                    <div>
+                      <label>Award / Title</label>
+                      <input value={manualAward} onChange={(e) => setManualAward(e.target.value)} />
+                      <div className="hint">Used for the “Award / Title” field.</div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label>Upload .csv or .txt</label>
+                      <input
+                        type="file"
+                        accept=".csv,.txt,text/csv,text/plain"
+                        onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
+                      />
+                      <div className="hint">
+                        CSV: <span className="kbd">name,title</span> (optional: date, issuer) <br />
+                        TXT: <span className="kbd">Name - Title</span>
+                      </div>
+                      {uploadFile && rows.length > 0 && (
+                        <div className="hint" style={{ marginTop: 6 }}>
+                          Loaded rows: <b>{rows.length}</b> (preview uses first row)
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
 
-            <DraggableResizableText
-              fieldKey="subtitle"
-              text={subtitle}
-              pos={pos.subtitle}
-              onPosChange={updatePos}
-              onTextChange={updateText}
-              selected={selectedField === "subtitle"}
-              onSelect={setSelectedField}
-              previewBoxRef={previewBoxRef}
-              pxPerPt={pxPerPt}
-              maxWidthRatio={0.82}
-              style={{
-                fontFamily: fontFamilyFor(styleByField.subtitle.font),
-                fontWeight: 500,
-                color: styleByField.subtitle.color,
-                sizePt: styleByField.subtitle.size,
-                onSizeChange: sizeChange,
-              }}
-            />
+                <div className="two">
+                  <div>
+                    <label>Template</label>
+                    <select
+                      value={templateId}
+                      onChange={(e) => setTemplateId(e.target.value)}
+                      disabled={templatesLoading || templates.length === 0}
+                    >
+                      {templatesLoading ? (
+                        <option>Loading templates…</option>
+                      ) : templates.length === 0 ? (
+                        <option>No templates found</option>
+                      ) : (
+                        templates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.label}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <div className="hint">R2 folder: <span className="kbd">templates/</span></div>
+                  </div>
 
-            <DraggableResizableText
-              fieldKey="name"
-              text={sampleRow.name}
-              pos={pos.name}
-              onPosChange={updatePos}
-              onTextChange={updateText}
-              selected={selectedField === "name"}
-              onSelect={setSelectedField}
-              previewBoxRef={previewBoxRef}
-              pxPerPt={pxPerPt}
-              maxWidthRatio={0.82}
-              style={{
-                fontFamily: fontFamilyFor(styleByField.name.font),
-                fontWeight: 800,
-                color: styleByField.name.color,
-                sizePt: styleByField.name.size,
-                onSizeChange: sizeChange,
-              }}
-            />
+                  <div>
+                    <label>Paper</label>
+                    <select value={paper} onChange={(e) => setPaper(e.target.value)}>
+                      <option value="A4">A4 (landscape)</option>
+                      <option value="LETTER">US Letter (landscape)</option>
+                    </select>
+                    <div className="hint">Letter may crop slightly in PDF.</div>
+                  </div>
+                </div>
 
-            <DraggableResizableText
-              fieldKey="description"
-              text={description}
-              pos={pos.description}
-              onPosChange={updatePos}
-              onTextChange={updateText}
-              selected={selectedField === "description"}
-              onSelect={setSelectedField}
-              previewBoxRef={previewBoxRef}
-              pxPerPt={pxPerPt}
-              maxWidthRatio={0.82}
-              style={{
-                fontFamily: fontFamilyFor(styleByField.description.font),
-                fontWeight: 400,
-                color: styleByField.description.color,
-                sizePt: styleByField.description.size,
-                onSizeChange: sizeChange,
-              }}
-            />
+                <button className="btn" disabled={busy || templatesLoading || !templateKey} onClick={generatePreviewPdf}>
+                  {busy ? "Generating…" : "Generate Preview PDF"}
+                </button>
 
-            <DraggableResizableText
-              fieldKey="award"
-              text={sampleRow.award}
-              pos={pos.award}
-              onPosChange={updatePos}
-              onTextChange={updateText}
-              selected={selectedField === "award"}
-              onSelect={setSelectedField}
-              previewBoxRef={previewBoxRef}
-              pxPerPt={pxPerPt}
-              maxWidthRatio={0.82}
-              style={{
-                fontFamily: fontFamilyFor(styleByField.award.font),
-                fontWeight: 600,
-                color: styleByField.award.color,
-                sizePt: styleByField.award.size,
-                onSizeChange: sizeChange,
-              }}
-            />
-
-            <DraggableResizableText
-              fieldKey="date"
-              text={dateText ? `Date: ${dateText}` : "Date: ____-__-__"}
-              pos={pos.date}
-              onPosChange={updatePos}
-              onTextChange={updateText}
-              selected={selectedField === "date"}
-              onSelect={setSelectedField}
-              previewBoxRef={previewBoxRef}
-              pxPerPt={pxPerPt}
-              maxWidthRatio={0.50}
-              style={{
-                fontFamily: fontFamilyFor(styleByField.date.font),
-                fontWeight: 600,
-                color: styleByField.date.color,
-                sizePt: styleByField.date.size,
-                onSizeChange: sizeChange,
-              }}
-            />
-
-            <DraggableResizableText
-              fieldKey="issuer"
-              text={issuer || "Issuer / Organization"}
-              pos={pos.issuer}
-              onPosChange={updatePos}
-              onTextChange={updateText}
-              selected={selectedField === "issuer"}
-              onSelect={setSelectedField}
-              previewBoxRef={previewBoxRef}
-              pxPerPt={pxPerPt}
-              maxWidthRatio={0.50}
-              style={{
-                fontFamily: fontFamilyFor(styleByField.issuer.font),
-                fontWeight: 700,
-                color: styleByField.issuer.color,
-                sizePt: styleByField.issuer.size,
-                onSizeChange: sizeChange,
-              }}
-            />
+                {error && <div className="err">{error}</div>}
+              </div>
+            </div>
           </div>
 
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-            Background crop + font sizes + fit-to-width match the PDF export.
+          {/* CENTER: Canvas */}
+          <div className="card">
+            <div className="card-h">
+              <h2>CANVAS</h2>
+              <span className="pill">
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: "rgba(255,255,255,0.75)" }} />
+                Click a field to select
+              </span>
+            </div>
+
+            <div className="canvas-wrap">
+              <div ref={previewBoxRef} className="canvas-box" onPointerDown={() => { /* click empty space */ }}>
+                {previewImageUrl ? (
+                  <img className="canvas-img" src={previewImageUrl} alt="Template preview" />
+                ) : (
+                  <div className="canvas-empty">{templatesLoading ? "Loading templates…" : "No template preview"}</div>
+                )}
+
+                {canvasFields.map((f) => (
+                  <CanvasField
+                    key={f.key}
+                    fieldKey={f.key}
+                    text={f.text}
+                    pos={pos[f.key]}
+                    selected={selectedKey === f.key}
+                    onSelect={setSelectedKey}
+                    onPosChange={updatePos}
+                    onTextChange={updateText}
+                    previewBoxRef={previewBoxRef}
+                    style={f.style}
+                  />
+                ))}
+              </div>
+
+              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <span className="pill">Tip: double-click a field to edit</span>
+                <span className="pill">Press <span className="kbd">Enter</span> to save</span>
+                <span className="pill">Press <span className="kbd">Esc</span> to cancel</span>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT: Inspector */}
+          <div className="card">
+            <div className="card-h">
+              <h2>INSPECTOR</h2>
+              <span className="pill">Selected: <b style={{ color: "rgba(255,255,255,0.92)" }}>{prettyFieldName(selectedKey)}</b></span>
+            </div>
+            <div className="card-b">
+              <div className="fieldlist">
+                {FIELD_KEYS.map((k) => (
+                  <button
+                    key={k}
+                    className={`fieldbtn ${selectedKey === k ? "active" : ""}`}
+                    onClick={() => setSelectedKey(k)}
+                    type="button"
+                  >
+                    <div>
+                      <div style={{ fontWeight: 900, fontSize: 12 }}>{prettyFieldName(k)}</div>
+                      <div className="mini">{String(getFieldText(k)).slice(0, 26)}{String(getFieldText(k)).length > 26 ? "…" : ""}</div>
+                    </div>
+                    <span style={{ color: "rgba(255,255,255,0.55)" }}>→</span>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ marginTop: 14 }} className="row">
+                <div>
+                  <label>Font</label>
+                  <select
+                    value={inspectorStyle.font}
+                    onChange={(e) => updateStyle(selectedKey, { font: e.target.value })}
+                  >
+                    {FONT_OPTIONS.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="hint">Live preview uses closest system fallback (PDF uses StandardFonts).</div>
+                </div>
+
+                <div className="two">
+                  <div>
+                    <label>Color</label>
+                    <input
+                      type="color"
+                      value={inspectorStyle.color}
+                      onChange={(e) => updateStyle(selectedKey, { color: e.target.value })}
+                      style={{ height: 44 }}
+                    />
+                  </div>
+                  <div>
+                    <label>Weight</label>
+                    <select
+                      value={String(inspectorStyle.weight ?? 600)}
+                      onChange={(e) => updateStyle(selectedKey, { weight: Number(e.target.value) })}
+                    >
+                      <option value="400">Regular (400)</option>
+                      <option value="500">Medium (500)</option>
+                      <option value="600">Semi (600)</option>
+                      <option value="700">Bold (700)</option>
+                      <option value="800">Extra (800)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label>Size (preview)</label>
+                  <input
+                    className="slider"
+                    type="range"
+                    min="10"
+                    max="60"
+                    value={inspectorStyle.size ?? 18}
+                    onChange={(e) => updateStyle(selectedKey, { size: Number(e.target.value) })}
+                  />
+                  <div className="hint">This adjusts the live preview. If you want PDF to match size exactly, we’ll wire size into preview.js too.</div>
+                </div>
+
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => {
+                    // reset a selected field to sane defaults
+                    const defaults = {
+                      certTitle: { font: "helvetica", color: "#1e2233", size: 40, weight: 800 },
+                      subtitle: { font: "helvetica", color: "#2b2f44", size: 18, weight: 500 },
+                      name: { font: "helvetica", color: "#1e2233", size: 32, weight: 800 },
+                      description: { font: "helvetica", color: "#2b2f44", size: 16, weight: 400 },
+                      award: { font: "helvetica", color: "#2b2f44", size: 18, weight: 600 },
+                      date: { font: "helvetica", color: "#2b2f44", size: 12, weight: 600 },
+                      issuer: { font: "helvetica", color: "#1e2233", size: 14, weight: 700 },
+                    };
+                    updateStyle(selectedKey, defaults[selectedKey] || {});
+                  }}
+                >
+                  Reset selected style
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
