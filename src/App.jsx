@@ -964,4 +964,95 @@ export default function App() {
           <div className="card">
             <div className="cardHead">
               <h2>INSPECTOR</h2>
+                  <div className="pill">
+                {selectedKey ? `Selected: ${selectedKey}` : "No selection"}
+              </div>
+            </div>
+
+            <div className="cardBody">
+              {!selectedKey ? (
+                <div className="muted">
+                  Click a text field on the template to edit its settings.
+                </div>
+              ) : (
+                <>
+                  <div className="row">
+                    <label>Font</label>
+                    <select
+                      value={styleByField[selectedKey]?.font || "helvetica"}
+                      onChange={(e) => onStyleChange(selectedKey, { font: e.target.value })}
+                    >
+                      <option value="helvetica">Helvetica</option>
+                      <option value="times">Times</option>
+                      <option value="courier">Courier</option>
+                    </select>
+                  </div>
+
+                  <div className="grid2">
+                    <div className="row">
+                      <label>Color</label>
+                      <input
+                        type="color"
+                        value={styleByField[selectedKey]?.color || "#000000"}
+                        onChange={(e) => onStyleChange(selectedKey, { color: e.target.value })}
+                        style={{ height: 44 }}
+                      />
+                    </div>
+
+                    <div className="row">
+                      <label>Weight</label>
+                      <select
+                        value={String(styleByField[selectedKey]?.weight ?? 600)}
+                        onChange={(e) => onStyleChange(selectedKey, { weight: Number(e.target.value) })}
+                      >
+                        <option value="400">400</option>
+                        <option value="500">500</option>
+                        <option value="600">600</option>
+                        <option value="700">700</option>
+                        <option value="800">800</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="row">
+                    <label>Size</label>
+                    <input
+                      type="range"
+                      min="10"
+                      max="80"
+                      value={Number(styleByField[selectedKey]?.size ?? 18)}
+                      onChange={(e) => onStyleChange(selectedKey, { size: Number(e.target.value) })}
+                    />
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      Current: <b>{Number(styleByField[selectedKey]?.size ?? 18)}px</b>
+                    </div>
+                  </div>
+
+                  <div className="row">
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      onClick={() => {
+                        // Quick reset for selected field
+                        onStyleChange(selectedKey, { font: "helvetica", color: "#1e2233", size: 18, weight: 600 });
+                      }}
+                    >
+                      Reset field style
+                    </button>
+                  </div>
+
+                  <div className="row">
+                    <div className="muted">
+                      Tip: double-click the field to edit text. Drag to move. Resize handles appear on selection.
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
