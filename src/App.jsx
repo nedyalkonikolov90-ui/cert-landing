@@ -1,173 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Stage, Layer, Image as KImage, Text as KText, Transformer } from "react-konva";
 import useImage from "use-image";
-import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
 
-// ---------- Canvas sizes (pt-like pixels) ----------
-const SIZES = {
-  A4: { w: 842, h: 595 }, // landscape
-  LETTER: { w: 792, h: 612 }, // landscape
-};
+import CertificateStage from "./components/CertificateStage";
+import TextEditorOverlay from "./components/TextEditorOverlay";
 
-const MAX_PREVIEW = 5;
+import { SIZES, MAX_PREVIEW, FONT_OPTIONS, niceFieldLabel, clamp } from "./lib/constants";
+import { parseCsv, parseTxt } from "./lib/parsers";
+import { ensureFontLink, fetchTemplates } from "./lib/templates";
+import { exportPdfFromStage, exportZipPngFromStage } from "./lib/export";
+import { styles } from "./styles/appStyles";
 
-// ---------- Helpers ----------
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
-}
-
-function parseCsv(text) {
-  const lines = text.replace(/\r/g, "").split("\n").filter(Boolean);
-  if (lines.length < 2) return { error: "CSV must include header + at least 1 row." };
-
-  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
-  const nameIndex = header.indexOf("name");
-  const titleIndex = header.indexOf("title");
-  const dateIndex = header.indexOf("date");
-  const issuerIndex = header.indexOf("issuer");
-
-  if (nameIndex === -1 || titleIndex === -1) {
-    return { error: "CSV must include headers: name,title (date optional, issuer optional)." };
-  }
-
-  const rows = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",").map((c) => c.trim());
-    const name = cols[nameIndex] || "";
-    const award = cols[titleIndex] || "";
-    const date = dateIndex >= 0 ? cols[dateIndex] || "" : "";
-    const issuer = issuerIndex >= 0 ? cols[issuerIndex] || "" : "";
-    if (!name || !award) continue;
-    rows.push({ name, award, date, issuer });
-  }
-  if (rows.length === 0) return { error: "No valid rows found (need name + title)." };
-  return { rows };
-}
-
-// TXT: "Name - Title"
-function parseTxt(text) {
-  const lines = text
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return { error: "TXT must include at least 1 line." };
-  const rows = [];
-  for (const line of lines) {
-    const parts = line.split(" - ");
-    if (parts.length >= 2)
-      rows.push({
-        name: parts[0].trim(),
-        award: parts.slice(1).join(" - ").trim(),
-        date: "",
-        issuer: "",
-      });
-  }
-  if (rows.length === 0) return { error: 'TXT lines must be like: "Name - Title"' };
-  return { rows };
-}
-
-// Draw background “cover”
-function coverRect(imgW, imgH, boxW, boxH) {
-  const scale = Math.max(boxW / imgW, boxH / imgH);
-  const w = imgW * scale;
-  const h = imgH * scale;
-  const x = (boxW - w) / 2;
-  const y = (boxH - h) / 2;
-  return { x, y, w, h };
-}
-
-// Load Google fonts (so canvas text matches what users expect)
-function ensureFontLink() {
-  const id = "certifyly-fonts";
-  if (document.getElementById(id)) return;
-  const link = document.createElement("link");
-  link.id = id;
-  link.rel = "stylesheet";
-  link.href =
-    "https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Playfair+Display:wght@400;600;700&family=Montserrat:wght@400;600;700&family=Poppins:wght@400;600;700&family=Oswald:wght@400;600;700&display=swap";
-  document.head.appendChild(link);
-}
-
-const FONT_OPTIONS = [
-  { id: "Inter", label: "Inter (Modern)" },
-  { id: "Playfair Display", label: "Playfair Display (Elegant)" },
-  { id: "Montserrat", label: "Montserrat (Clean)" },
-  { id: "Poppins", label: "Poppins (Friendly)" },
-  { id: "Oswald", label: "Oswald (Bold)" },
-];
-
-function niceFieldLabel(id) {
-  return (
-    {
-      certTitle: "Certificate Title",
-      subtitle: "Free text (below title)",
-      name: "Name",
-      description: "Free text (below name)",
-      award: "Title / Award",
-      date: "Date",
-      issuer: "Issuer",
-    }[id] || id
-  );
-}
-
-// ---------- Editable overlay for double-click editing ----------
-function TextEditorOverlay({ open, value, onChange, onClose, stageContainerRef, nodeAbsRect }) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const t = setTimeout(() => ref.current?.focus(), 10);
-    return () => clearTimeout(t);
-  }, [open]);
-
-  if (!open || !nodeAbsRect) return null;
-
-  const { left, top, width, height } = nodeAbsRect;
-
-  return (
-    <textarea
-      ref={ref}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      onBlur={onClose}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onClose();
-        }
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onClose();
-        }
-      }}
-      style={{
-        position: "absolute",
-        left,
-        top,
-        width: Math.max(120, width),
-        height: Math.max(34, height),
-        padding: "8px 10px",
-        borderRadius: 10,
-        border: "2px solid rgba(91,124,255,0.9)",
-        outline: "none",
-        fontSize: 16,
-        lineHeight: 1.2,
-        resize: "none",
-        background: "rgba(255,255,255,0.95)",
-        boxShadow: "0 12px 25px rgba(0,0,0,0.15)",
-        zIndex: 50,
-      }}
-    />
-  );
-}
-
-// ---------- Main App ----------
 export default function App() {
   useEffect(() => ensureFontLink(), []);
 
-  // Templates loaded from R2 via /api/templates
+  // Templates list
   const [templates, setTemplates] = useState([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesError, setTemplatesError] = useState("");
@@ -178,7 +25,7 @@ export default function App() {
   const [templateKey, setTemplateKey] = useState("");
   const selectedTemplate = useMemo(() => templates.find((t) => t.key === templateKey) || null, [templates, templateKey]);
 
-  // Input mode: manual vs upload
+  // Input mode
   const [inputMode, setInputMode] = useState("manual"); // manual | upload
   const [uploadFile, setUploadFile] = useState(null);
   const [rows, setRows] = useState([]);
@@ -187,7 +34,7 @@ export default function App() {
   const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
   const [issuerText, setIssuerText] = useState("Issuer / Organization");
 
-  // Extra free text fields
+  // Texts
   const [certTitle, setCertTitle] = useState("Certificate of Achievement");
   const [subtitle, setSubtitle] = useState("");
   const [description, setDescription] = useState("");
@@ -195,14 +42,14 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // Konva
+  // Konva refs
   const stageRef = useRef(null);
   const stageContainerRef = useRef(null);
   const transformerRef = useRef(null);
 
   const [selectedId, setSelectedId] = useState("");
 
-  // Fields on canvas (pixel positions)
+  // Fields
   const [fields, setFields] = useState(() => [
     {
       id: "certTitle",
@@ -290,7 +137,11 @@ export default function App() {
     },
   ]);
 
-  // Keep field texts in sync with form state
+  function updateField(id, patch) {
+    setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  }
+
+  // Sync free texts into fields
   useEffect(() => {
     setFields((prev) =>
       prev.map((f) => {
@@ -307,7 +158,7 @@ export default function App() {
     return rows[0] || { name: "Student Name", award: "For outstanding performance", date: dateText, issuer: issuerText };
   }, [inputMode, manualName, manualAward, dateText, issuerText, rows]);
 
-  // Sync dynamic row-based fields to the canvas for preview
+  // Sync row-based fields to canvas preview
   useEffect(() => {
     setFields((prev) =>
       prev.map((f) => {
@@ -335,19 +186,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paper]);
 
-  // Load templates list
+  // Load templates
   useEffect(() => {
     let alive = true;
     (async () => {
       setTemplatesLoading(true);
       setTemplatesError("");
       try {
-        const res = await fetch("/api/templates");
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
+        const list = await fetchTemplates();
         if (!alive) return;
-        setTemplates(data.templates || []);
-        if ((data.templates || []).length > 0) setTemplateKey((data.templates || [])[0].key);
+        setTemplates(list);
+        if (list.length > 0) setTemplateKey(list[0].key);
       } catch (e) {
         if (!alive) return;
         setTemplatesError(String(e?.message || "Failed to load templates"));
@@ -364,48 +213,9 @@ export default function App() {
   // Background image
   const [bg] = useImage(selectedTemplate?.url || "", "anonymous");
 
-  // Attach transformer to selected node
-  useEffect(() => {
-    const tr = transformerRef.current;
-    const stage = stageRef.current;
-    if (!tr || !stage) return;
-
-    if (!selectedId) {
-      tr.nodes([]);
-      tr.getLayer()?.batchDraw();
-      return;
-    }
-    const node = stage.findOne(`#${selectedId}`);
-    if (!node) return;
-
-    tr.nodes([node]);
-    tr.getLayer()?.batchDraw();
-  }, [selectedId, fields]);
-
-  function updateField(id, patch) {
-    setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
-  }
-
-  async function handleUpload(file) {
-    setUploadFile(file);
-    setError("");
-    const text = await file.text();
-    let parsed;
-    if (file.name.toLowerCase().endsWith(".csv")) parsed = parseCsv(text);
-    else if (file.name.toLowerCase().endsWith(".txt")) parsed = parseTxt(text);
-    else parsed = { error: "Upload a .csv or .txt file." };
-
-    if (parsed.error) {
-      setRows([]);
-      setError(parsed.error);
-    } else {
-      setRows(parsed.rows);
-    }
-  }
-
   const selectedField = useMemo(() => fields.find((f) => f.id === selectedId) || null, [fields, selectedId]);
 
-  // Inline editing overlay
+  // Inline editor overlay state
   const [editingId, setEditingId] = useState("");
   const [editorValue, setEditorValue] = useState("");
   const [editorRect, setEditorRect] = useState(null);
@@ -439,6 +249,7 @@ export default function App() {
 
   function closeEditor() {
     if (!editingId) return;
+
     updateField(editingId, { text: editorValue });
 
     if (editingId === "certTitle") setCertTitle(editorValue);
@@ -456,109 +267,73 @@ export default function App() {
     setEditorRect(null);
   }
 
-  /**
-   * Snapshot stage WITHOUT editor tools (Transformer handles/box).
-   * This is the key fix for “PDF exports include editor tools”.
-   */
-  async function snapshotStagePngBytes() {
-    const stage = stageRef.current;
-    if (!stage) throw new Error("Stage not ready");
+  async function handleUpload(file) {
+    setUploadFile(file);
+    setError("");
+    const text = await file.text();
 
-    // Close inline editor if open (textarea overlay is HTML, not in canvas, but keep UX clean)
-    if (editingId) closeEditor();
+    let parsed;
+    if (file.name.toLowerCase().endsWith(".csv")) parsed = parseCsv(text);
+    else if (file.name.toLowerCase().endsWith(".txt")) parsed = parseTxt(text);
+    else parsed = { error: "Upload a .csv or .txt file." };
 
-    const tr = transformerRef.current;
-    const prevSelected = selectedId;
-
-    // Hide transformer + clear nodes so it doesn't render in snapshot
-    if (tr) {
-      tr.nodes([]);
-      tr.visible(false);
-      tr.getLayer()?.batchDraw();
+    if (parsed.error) {
+      setRows([]);
+      setError(parsed.error);
+    } else {
+      setRows(parsed.rows);
     }
-
-    // Also clear selection state so nothing re-attaches immediately
-    setSelectedId("");
-    await new Promise((r) => setTimeout(r, 30));
-
-    const dataUrl = stage.toDataURL({ pixelRatio: 2 });
-    const bytes = await (await fetch(dataUrl)).arrayBuffer();
-
-    // Restore
-    if (tr) {
-      tr.visible(true);
-      tr.getLayer()?.batchDraw();
-    }
-    setSelectedId(prevSelected);
-
-    return bytes;
   }
 
-  // Export: Build PDF client-side from EXACT stage render(s) => pixel-perfect, WITHOUT editor tools
+  function effectiveRows() {
+    return inputMode === "manual"
+      ? [{ name: manualName, award: manualAward, date: dateText, issuer: issuerText }]
+      : rows;
+  }
+
   async function exportPdfPreview() {
     setError("");
     if (!selectedTemplate) return setError("No template selected.");
 
-    const effectiveRows =
-      inputMode === "manual"
-        ? [{ name: manualName, award: manualAward, date: dateText, issuer: issuerText }]
-        : rows;
-
-    if (!effectiveRows.length) return setError("Provide at least 1 recipient (manual or upload).");
-
-    const previewRows = effectiveRows.slice(0, MAX_PREVIEW);
+    const list = effectiveRows();
+    if (!list.length) return setError("Provide at least 1 recipient (manual or upload).");
 
     setBusy(true);
     try {
-      const pdfDoc = await PDFDocument.create();
-
-      for (let i = 0; i < previewRows.length; i++) {
-        const r = previewRows[i];
-
-        // Update canvas texts for this row (without changing layout)
-        setFields((prev) =>
-          prev.map((f) => {
-            if (f.id === "name") return { ...f, text: r.name || "" };
-            if (f.id === "award") return { ...f, text: r.award || "" };
-            if (f.id === "date") return { ...f, text: r.date ? `Date: ${r.date}` : "" };
-            if (f.id === "issuer") return { ...f, text: r.issuer || issuerText || "" };
-            return f;
-          })
-        );
-
-        await new Promise((res) => setTimeout(res, 30));
-
-        const pngBytes = await snapshotStagePngBytes();
-
-        const page = pdfDoc.addPage([CW, CH]);
-        const img = await pdfDoc.embedPng(pngBytes);
-        page.drawImage(img, { x: 0, y: 0, width: CW, height: CH });
-      }
-
-      const pdfBytes = await pdfDoc.save();
-      const blob = new Blob([pdfBytes], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "certificate_preview.pdf";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-      // restore preview sample row after export
-      setTimeout(() => {
-        setFields((prev) =>
-          prev.map((f) => {
-            if (f.id === "name") return { ...f, text: sampleRow.name || "" };
-            if (f.id === "award") return { ...f, text: sampleRow.award || "" };
-            if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
-            if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
-            return f;
-          })
-        );
-      }, 0);
+      await exportPdfFromStage({
+        rows: list,
+        cw: CW,
+        ch: CH,
+        stageRef,
+        transformerRef,
+        selectedId,
+        setSelectedId,
+        editingId,
+        closeEditor,
+        max: MAX_PREVIEW,
+        beforeEachRow: async (r) => {
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: r.name || "" };
+              if (f.id === "award") return { ...f, text: r.award || "" };
+              if (f.id === "date") return { ...f, text: r.date ? `Date: ${r.date}` : "" };
+              if (f.id === "issuer") return { ...f, text: r.issuer || issuerText || "" };
+              return f;
+            })
+          );
+        },
+        afterExportRestore: () => {
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+              if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+              if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
+              if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
+              return f;
+            })
+          );
+        },
+      });
     } catch (e) {
       setError(String(e?.message || "Export failed"));
     } finally {
@@ -566,66 +341,49 @@ export default function App() {
     }
   }
 
-  // Optional: ZIP PNGs (useful for batch) WITHOUT editor tools
   async function exportPngZipPreview() {
     setError("");
     if (!selectedTemplate) return setError("No template selected.");
 
-    const effectiveRows =
-      inputMode === "manual"
-        ? [{ name: manualName, award: manualAward, date: dateText, issuer: issuerText }]
-        : rows;
-
-    if (!effectiveRows.length) return setError("Provide at least 1 recipient (manual or upload).");
-
-    const previewRows = effectiveRows.slice(0, MAX_PREVIEW);
+    const list = effectiveRows();
+    if (!list.length) return setError("Provide at least 1 recipient (manual or upload).");
 
     setBusy(true);
     try {
       const zip = new JSZip();
-
-      for (let i = 0; i < previewRows.length; i++) {
-        const r = previewRows[i];
-
-        setFields((prev) =>
-          prev.map((f) => {
-            if (f.id === "name") return { ...f, text: r.name || "" };
-            if (f.id === "award") return { ...f, text: r.award || "" };
-            if (f.id === "date") return { ...f, text: r.date ? `Date: ${r.date}` : "" };
-            if (f.id === "issuer") return { ...f, text: r.issuer || issuerText || "" };
-            return f;
-          })
-        );
-
-        await new Promise((res) => setTimeout(res, 30));
-
-        const bin = await snapshotStagePngBytes();
-        zip.file(`certificate_${i + 1}.png`, bin);
-      }
-
-      const blob = await zip.generateAsync({ type: "blob" });
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "certificates_preview.zip";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-      // restore preview
-      setTimeout(() => {
-        setFields((prev) =>
-          prev.map((f) => {
-            if (f.id === "name") return { ...f, text: sampleRow.name || "" };
-            if (f.id === "award") return { ...f, text: sampleRow.award || "" };
-            if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
-            if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
-            return f;
-          })
-        );
-      }, 0);
+      await exportZipPngFromStage({
+        rows: list,
+        stageRef,
+        transformerRef,
+        selectedId,
+        setSelectedId,
+        editingId,
+        closeEditor,
+        zip,
+        max: MAX_PREVIEW,
+        beforeEachRow: async (r) => {
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: r.name || "" };
+              if (f.id === "award") return { ...f, text: r.award || "" };
+              if (f.id === "date") return { ...f, text: r.date ? `Date: ${r.date}` : "" };
+              if (f.id === "issuer") return { ...f, text: r.issuer || issuerText || "" };
+              return f;
+            })
+          );
+        },
+        afterExportRestore: () => {
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+              if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+              if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
+              if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
+              return f;
+            })
+          );
+        },
+      });
     } catch (e) {
       setError(String(e?.message || "Export failed"));
     } finally {
@@ -633,7 +391,6 @@ export default function App() {
     }
   }
 
-  // ---------- UI ----------
   return (
     <div style={styles.page}>
       <div style={styles.header}>
@@ -780,110 +537,27 @@ export default function App() {
               <div style={styles.badge}>{paper}</div>
             </div>
 
-            <div style={styles.canvasStageOuter} ref={stageContainerRef}>
-              <Stage
-                width={CW}
-                height={CH}
-                ref={stageRef}
-                style={styles.stage}
-                onMouseDown={(e) => {
-                  if (e.target === e.target.getStage()) setSelectedId("");
-                }}
-              >
-                <Layer>
-                  {/* background */}
-                  {bg ? (
-                    (() => {
-                      const r = coverRect(bg.width, bg.height, CW, CH);
-                      return <KImage image={bg} x={r.x} y={r.y} width={r.w} height={r.h} listening={false} />;
-                    })()
-                  ) : (
-                    <KText text="Loading template…" x={20} y={20} fontFamily="Inter" fontSize={16} fill="#6b7280" />
-                  )}
+            <CertificateStage
+              cw={CW}
+              ch={CH}
+              bg={bg}
+              fields={fields}
+              selectedId={selectedId}
+              setSelectedId={setSelectedId}
+              updateField={updateField}
+              stageRef={stageRef}
+              transformerRef={transformerRef}
+              stageContainerRef={stageContainerRef}
+              openEditorFor={openEditorFor}
+            />
 
-                  {/* text fields */}
-                  {fields.map((f) => (
-                    <KText
-                      key={f.id}
-                      id={f.id}
-                      text={f.text || ""}
-                      x={f.x - (f.align === "center" ? f.width / 2 : f.align === "right" ? f.width : 0)}
-                      y={f.y}
-                      width={f.width}
-                      fontFamily={f.fontFamily}
-                      fontSize={f.fontSize}
-                      fontStyle={f.fontStyle}
-                      fill={f.fill}
-                      align={f.align}
-                      draggable
-                      onClick={() => setSelectedId(f.id)}
-                      onTap={() => setSelectedId(f.id)}
-                      onDblClick={() => openEditorFor(f.id)}
-                      onDblTap={() => openEditorFor(f.id)}
-                      onDragEnd={(e) => {
-                        const node = e.target;
-                        const newX =
-                          f.align === "center"
-                            ? node.x() + f.width / 2
-                            : f.align === "right"
-                            ? node.x() + f.width
-                            : node.x();
-                        updateField(f.id, { x: newX, y: node.y() });
-                      }}
-                      onTransformEnd={(e) => {
-                        const node = e.target;
-                        const tr = transformerRef.current;
-                        const scaleX = node.scaleX();
-                        const scaleY = node.scaleY();
-
-                        const nextWidth = Math.max(120, f.width * scaleX);
-                        const nextFontSize = clamp(f.fontSize * scaleY, 10, 120);
-
-                        node.scaleX(1);
-                        node.scaleY(1);
-
-                        const nx =
-                          f.align === "center"
-                            ? node.x() + nextWidth / 2
-                            : f.align === "right"
-                            ? node.x() + nextWidth
-                            : node.x();
-
-                        updateField(f.id, {
-                          x: nx,
-                          y: node.y(),
-                          width: nextWidth,
-                          fontSize: nextFontSize,
-                        });
-
-                        tr?.getLayer()?.batchDraw();
-                      }}
-                    />
-                  ))}
-
-                  <Transformer
-                    ref={transformerRef}
-                    rotateEnabled={false}
-                    enabledAnchors={["middle-left", "middle-right", "top-left", "top-right", "bottom-left", "bottom-right"]}
-                    boundBoxFunc={(oldBox, newBox) => {
-                      if (newBox.width < 120) return oldBox;
-                      if (newBox.height < 20) return oldBox;
-                      return newBox;
-                    }}
-                  />
-                </Layer>
-              </Stage>
-
-              {/* Editable overlay */}
-              <TextEditorOverlay
-                open={!!editingId}
-                value={editorValue}
-                onChange={setEditorValue}
-                onClose={closeEditor}
-                stageContainerRef={stageContainerRef}
-                nodeAbsRect={editorRect}
-              />
-            </div>
+            <TextEditorOverlay
+              open={!!editingId}
+              value={editorValue}
+              onChange={setEditorValue}
+              onClose={closeEditor}
+              nodeAbsRect={editorRect}
+            />
           </div>
         </div>
 
@@ -1015,7 +689,7 @@ export default function App() {
 
           <div style={styles.hr} />
           <div style={styles.help}>
-            Export is <b>pixel-perfect</b> because PDF/PNGs are created from the same canvas render — <b>without</b> editor tools.
+            Export is <b>pixel-perfect</b> because it uses the same canvas snapshot — <b>without</b> editor tools.
           </div>
         </div>
       </div>
@@ -1023,156 +697,3 @@ export default function App() {
   );
 }
 
-// ---------- Styles (modern UI) ----------
-const styles = {
-  page: {
-    minHeight: "100vh",
-    background:
-      "radial-gradient(1200px 600px at 15% 10%, rgba(91,124,255,0.18), transparent 60%), radial-gradient(900px 500px at 85% 20%, rgba(255,138,76,0.16), transparent 55%), #0b1020",
-    color: "#eaf0ff",
-    padding: 22,
-    fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 16,
-    padding: 18,
-    borderRadius: 18,
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    backdropFilter: "blur(10px)",
-    boxShadow: "0 30px 60px rgba(0,0,0,0.35)",
-  },
-  brand: { fontSize: 22, fontWeight: 800, letterSpacing: 0.2 },
-  subbrand: { marginTop: 2, fontSize: 13, opacity: 0.85 },
-  headerActions: { display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" },
-
-  grid: {
-    marginTop: 16,
-    display: "grid",
-    gridTemplateColumns: "360px 1fr 360px",
-    gap: 16,
-    alignItems: "start",
-  },
-
-  panel: {
-    padding: 16,
-    borderRadius: 18,
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    backdropFilter: "blur(10px)",
-    boxShadow: "0 30px 60px rgba(0,0,0,0.35)",
-  },
-  panelTitle: { fontWeight: 800, fontSize: 14, letterSpacing: 0.6, opacity: 0.95, marginBottom: 12 },
-
-  block: { marginBottom: 12 },
-  label: { display: "block", fontSize: 12, opacity: 0.9, marginBottom: 6 },
-  input: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.06)",
-    color: "#eaf0ff",
-    outline: "none",
-  },
-  select: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.06)",
-    color: "#eaf0ff",
-    outline: "none",
-  },
-  help: { fontSize: 12, opacity: 0.78, marginTop: 6, lineHeight: 1.3 },
-  hr: { height: 1, background: "rgba(255,255,255,0.10)", margin: "14px 0" },
-  error: {
-    marginTop: 10,
-    padding: 10,
-    borderRadius: 12,
-    background: "rgba(180,35,24,0.12)",
-    border: "1px solid rgba(180,35,24,0.35)",
-    color: "#ffd7d2",
-    whiteSpace: "pre-wrap",
-    fontSize: 13,
-  },
-
-  btnPrimary: {
-    padding: "11px 14px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "linear-gradient(135deg, rgba(91,124,255,0.95), rgba(116,88,255,0.85))",
-    color: "white",
-    fontWeight: 800,
-    cursor: "pointer",
-    boxShadow: "0 16px 35px rgba(91,124,255,0.25)",
-  },
-  btnGhost: {
-    padding: "11px 14px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.14)",
-    background: "rgba(255,255,255,0.06)",
-    color: "#eaf0ff",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  btnDisabled: {
-    padding: "11px 14px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.10)",
-    color: "rgba(255,255,255,0.7)",
-    fontWeight: 800,
-    cursor: "not-allowed",
-  },
-
-  canvasWrap: { minWidth: 0 },
-  canvasCard: {
-    padding: 16,
-    borderRadius: 18,
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    backdropFilter: "blur(10px)",
-    boxShadow: "0 30px 60px rgba(0,0,0,0.35)",
-  },
-  canvasTitleRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 12 },
-  canvasTitle: { fontSize: 14, fontWeight: 800, letterSpacing: 0.5 },
-  canvasHint: { marginTop: 4, fontSize: 12, opacity: 0.78 },
-  badge: {
-    padding: "6px 10px",
-    borderRadius: 999,
-    background: "rgba(255,255,255,0.08)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    fontSize: 12,
-    fontWeight: 800,
-  },
-  canvasStageOuter: {
-    width: "100%",
-    display: "flex",
-    justifyContent: "center",
-    position: "relative",
-  },
-  stage: {
-    borderRadius: 14,
-    background: "rgba(255,255,255,0.02)",
-    border: "1px solid rgba(255,255,255,0.10)",
-    boxShadow: "0 25px 60px rgba(0,0,0,0.40)",
-    width: "100%",
-    maxWidth: 1100,
-    height: "auto",
-  },
-  row2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
-  pill: {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "6px 10px",
-    borderRadius: 999,
-    background: "rgba(255,255,255,0.08)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    fontSize: 12,
-    fontWeight: 800,
-  },
-};
