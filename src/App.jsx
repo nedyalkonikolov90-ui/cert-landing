@@ -159,17 +159,20 @@ export default function App() {
   }, [inputMode, manualName, manualAward, dateText, issuerText, rows]);
 
   // Sync row-based fields to canvas preview
-  useEffect(() => {
-    setFields((prev) =>
-      prev.map((f) => {
-        if (f.id === "name") return { ...f, text: sampleRow.name || "" };
-        if (f.id === "award") return { ...f, text: sampleRow.award || "" };
-        if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
-        if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
-        return f;
-      })
-    );
-  }, [sampleRow, issuerText, dateText]);
+ useEffect(() => {
+  const effectiveDate = sampleRow.date || dateText;      // ✅ fallback
+  const effectiveIssuer = sampleRow.issuer || issuerText; // ✅ fallback
+
+  setFields((prev) =>
+    prev.map((f) => {
+      if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+      if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+      return f;
+    })
+  );
+}, [sampleRow, issuerText, dateText]);
 
   // When paper changes, adjust stage + keep fields proportional-ish
   useEffect(() => {
@@ -312,27 +315,33 @@ export default function App() {
         closeEditor,
         max: MAX_PREVIEW,
         beforeEachRow: async (r) => {
-          setFields((prev) =>
-            prev.map((f) => {
-              if (f.id === "name") return { ...f, text: r.name || "" };
-              if (f.id === "award") return { ...f, text: r.award || "" };
-              if (f.id === "date") return { ...f, text: r.date ? `Date: ${r.date}` : "" };
-              if (f.id === "issuer") return { ...f, text: r.issuer || issuerText || "" };
-              return f;
-            })
-          );
-        },
-        afterExportRestore: () => {
-          setFields((prev) =>
-            prev.map((f) => {
-              if (f.id === "name") return { ...f, text: sampleRow.name || "" };
-              if (f.id === "award") return { ...f, text: sampleRow.award || "" };
-              if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
-              if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
-              return f;
-            })
-          );
-        },
+  const effectiveDate = r.date || dateText;          // ✅ fallback
+  const effectiveIssuer = r.issuer || issuerText;    // ✅ fallback
+
+  setFields((prev) =>
+    prev.map((f) => {
+      if (f.id === "name") return { ...f, text: r.name || "" };
+      if (f.id === "award") return { ...f, text: r.award || "" };
+      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+      return f;
+    })
+  );
+},
+       afterExportRestore: () => {
+  const effectiveDate = sampleRow.date || dateText;      // ✅ fallback
+  const effectiveIssuer = sampleRow.issuer || issuerText; // ✅ fallback
+
+  setFields((prev) =>
+    prev.map((f) => {
+      if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+      if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+      return f;
+    })
+  );
+},
       });
     } catch (e) {
       setError(String(e?.message || "Export failed"));
@@ -361,28 +370,34 @@ export default function App() {
         closeEditor,
         zip,
         max: MAX_PREVIEW,
-        beforeEachRow: async (r) => {
-          setFields((prev) =>
-            prev.map((f) => {
-              if (f.id === "name") return { ...f, text: r.name || "" };
-              if (f.id === "award") return { ...f, text: r.award || "" };
-              if (f.id === "date") return { ...f, text: r.date ? `Date: ${r.date}` : "" };
-              if (f.id === "issuer") return { ...f, text: r.issuer || issuerText || "" };
-              return f;
-            })
-          );
-        },
-        afterExportRestore: () => {
-          setFields((prev) =>
-            prev.map((f) => {
-              if (f.id === "name") return { ...f, text: sampleRow.name || "" };
-              if (f.id === "award") return { ...f, text: sampleRow.award || "" };
-              if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : "" };
-              if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText || "" };
-              return f;
-            })
-          );
-        },
+       beforeEachRow: async (r) => {
+  const effectiveDate = r.date || dateText;          // ✅ fallback
+  const effectiveIssuer = r.issuer || issuerText;    // ✅ fallback
+
+  setFields((prev) =>
+    prev.map((f) => {
+      if (f.id === "name") return { ...f, text: r.name || "" };
+      if (f.id === "award") return { ...f, text: r.award || "" };
+      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+      return f;
+    })
+  );
+},
+       afterExportRestore: () => {
+  const effectiveDate = sampleRow.date || dateText;      // ✅ fallback
+  const effectiveIssuer = sampleRow.issuer || issuerText; // ✅ fallback
+
+  setFields((prev) =>
+    prev.map((f) => {
+      if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+      if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+      return f;
+    })
+  );
+},
       });
     } catch (e) {
       setError(String(e?.message || "Export failed"));
