@@ -1,3 +1,13 @@
+export async function ensureFontLoaded(fontFamily, weight = 400) {
+  try {
+    if (!document.fonts?.load) return;
+    // Load the font (and wait until it's ready)
+    await document.fonts.load(`${weight} 16px "${fontFamily}"`);
+    await document.fonts.ready;
+  } catch {
+    // ignore (some browsers)
+  }
+}
 export function ensureFontLink() {
   const id = "certifyly-fonts";
   if (document.getElementById(id)) return;
