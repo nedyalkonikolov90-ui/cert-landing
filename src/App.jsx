@@ -589,7 +589,17 @@ export default function App() {
                 <select
                   style={styles.select}
                   value={selectedField.fontFamily}
-                  onChange={(e) => updateField(selectedField.id, { fontFamily: e.target.value })}
+                 onChange={async (e) => {
+  const next = e.target.value;
+  updateField(selectedField.id, { fontFamily: next });
+
+  // Wait for browser to actually load font file
+  const isBold = (selectedField.fontStyle || "").includes("bold");
+  await ensureFontLoaded(next, isBold ? 700 : 400);
+
+  // Force Konva redraw so the new font appears immediately
+  stageRef.current?.getLayers()?.forEach((l) => l.batchDraw());
+}}
                 >
                   {FONT_OPTIONS.map((f) => (
                     <option key={f.id} value={f.id}>
