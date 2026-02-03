@@ -170,7 +170,7 @@ export default function App() {
         return f;
       })
     );
-  }, [sampleRow, issuerText]);
+  }, [sampleRow, issuerText, dateText]);
 
   // When paper changes, adjust stage + keep fields proportional-ish
   useEffect(() => {
