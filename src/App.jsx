@@ -8,6 +8,7 @@ import TextEditorOverlay from "./components/TextEditorOverlay";
 import { SIZES, MAX_PREVIEW, FONT_OPTIONS, niceFieldLabel, clamp } from "./lib/constants";
 import { parseCsv, parseTxt } from "./lib/parsers";
 import { ensureFontLink, fetchTemplates } from "./lib/templates";
+import { ensureFontLink, fetchTemplates, ensureFontLoaded } from "./lib/templates";
 import { exportPdfFromStage, exportZipPngFromStage } from "./lib/export";
 import { styles } from "./styles/appStyles";
 
