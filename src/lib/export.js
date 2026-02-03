@@ -28,9 +28,13 @@ export async function snapshotStagePngBytes({
   // Clear selection state so it won't reattach mid-snapshot
   setSelectedId("");
   await new Promise((r) => setTimeout(r, 30));
+  const dataUrl = stage.toDataURL({
+  pixelRatio: 2.5,
+  mimeType: "image/jpeg",
+  quality: 0.9,
+});
+const bytes = await (await fetch(dataUrl)).arrayBuffer();
 
-  const dataUrl = stage.toDataURL({ pixelRatio });
-  const bytes = await (await fetch(dataUrl)).arrayBuffer();
 
   // Restore selection + transformer
   if (tr) {
@@ -77,7 +81,7 @@ export async function exportPdfFromStage({
     });
 
     const page = pdfDoc.addPage([cw, ch]);
-    const img = await pdfDoc.embedPng(pngBytes);
+    const img = await pdfDoc.embedJpg(pngBytes);
     page.drawImage(img, { x: 0, y: 0, width: cw, height: ch });
   }
 
