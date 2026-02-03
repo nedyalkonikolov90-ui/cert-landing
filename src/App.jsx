@@ -29,8 +29,10 @@ export default function App() {
   const [inputMode, setInputMode] = useState("manual"); // manual | upload
   const [uploadFile, setUploadFile] = useState(null);
   const [rows, setRows] = useState([]);
-  const [manualName, setManualName] = useState("Student Name");
-  const [manualAward, setManualAward] = useState("For outstanding performance");
+
+  // ✅ Manual table rows
+  const [manualRows, setManualRows] = useState([{ name: "Student Name", award: "For outstanding performance" }]);
+
   const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
   const [issuerText, setIssuerText] = useState("Issuer / Organization");
 
@@ -49,92 +51,109 @@ export default function App() {
 
   const [selectedId, setSelectedId] = useState("");
 
+  // ✅ Refs for “Enter-to-new-row” focus control
+  const manualNameRefs = useRef([]);
+  const manualAwardRefs = useRef([]);
+
+  function addManualRow(focusIndex = null) {
+    setManualRows((prev) => {
+      const next = [...prev, { name: "", award: "" }];
+      // Focus after render
+      const idx = focusIndex ?? next.length - 1;
+      setTimeout(() => manualNameRefs.current?.[idx]?.focus?.(), 0);
+      return next;
+    });
+  }
+
+  function updateManualRow(idx, patch) {
+    setManualRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
+
+  function removeManualRow(idx) {
+    setManualRows((prev) => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter((_, i) => i !== idx);
+      // Keep refs aligned
+      setTimeout(() => {
+        const target = Math.min(idx, next.length - 1);
+        manualNameRefs.current?.[target]?.focus?.();
+      }, 0);
+      return next;
+    });
+  }
+
+  function parsePastedRows(text) {
+    const lines = (text || "")
+      .replace(/\r/g, "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const out = [];
+    for (const line of lines) {
+      // Excel / Sheets tab-separated
+      if (line.includes("\t")) {
+        const [name, award] = line.split("\t");
+        out.push({ name: (name || "").trim(), award: (award || "").trim() });
+        continue;
+      }
+      // CSV-ish
+      if (line.includes(",")) {
+        const [name, award] = line.split(",");
+        out.push({ name: (name || "").trim(), award: (award || "").trim() });
+        continue;
+      }
+      // "Name - Title"
+      if (line.includes(" - ")) {
+        const [name, ...rest] = line.split(" - ");
+        out.push({ name: (name || "").trim(), award: rest.join(" - ").trim() });
+        continue;
+      }
+    }
+    return out.filter((r) => r.name || r.award);
+  }
+
+  function handleManualPaste(e) {
+    const text = e.clipboardData?.getData("text/plain") || "";
+    const parsed = parsePastedRows(text);
+    if (!parsed.length) return;
+
+    e.preventDefault();
+
+    setManualRows((prev) => {
+      // If first row is still default placeholder-ish, replace it
+      const first = prev[0] || { name: "", award: "" };
+      const firstLooksDefault =
+        String(first.name || "").trim().toLowerCase() === "student name" ||
+        String(first.award || "").trim().toLowerCase() === "for outstanding performance";
+
+      const cleaned = parsed
+        .map((r) => ({ name: (r.name || "").trim(), award: (r.award || "").trim() }))
+        .filter((r) => r.name && r.award);
+
+      if (!cleaned.length) return prev;
+
+      const next = firstLooksDefault ? cleaned : [...prev, ...cleaned];
+
+      // Focus the row after paste
+      setTimeout(() => {
+        const idx = next.length - cleaned.length; // first pasted row index
+        manualNameRefs.current?.[idx]?.focus?.();
+      }, 0);
+
+      return next;
+    });
+  }
+
   // Fields
   const [fields, setFields] = useState(() => [
-    {
-      id: "certTitle",
-      text: "Certificate of Achievement",
-      x: CW / 2,
-      y: 110,
-      fontFamily: "Inter",
-      fontSize: 44,
-      fontStyle: "bold",
-      fill: "#1e2233",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "subtitle",
-      text: "",
-      x: CW / 2,
-      y: 165,
-      fontFamily: "Inter",
-      fontSize: 18,
-      fontStyle: "normal",
-      fill: "#2b2f44",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "name",
-      text: "Student Name",
-      x: CW / 2,
-      y: 270,
-      fontFamily: "Inter",
-      fontSize: 38,
-      fontStyle: "bold",
-      fill: "#1e2233",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "description",
-      text: "",
-      x: CW / 2,
-      y: 322,
-      fontFamily: "Inter",
-      fontSize: 16,
-      fontStyle: "normal",
-      fill: "#2b2f44",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "award",
-      text: "For outstanding performance",
-      x: CW / 2,
-      y: 380,
-      fontFamily: "Inter",
-      fontSize: 20,
-      fontStyle: "normal",
-      fill: "#2b2f44",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "date",
-      text: `Date: ${new Date().toISOString().slice(0, 10)}`,
-      x: 115,
-      y: 560,
-      fontFamily: "Inter",
-      fontSize: 14,
-      fontStyle: "normal",
-      fill: "#2b2f44",
-      align: "left",
-      width: 260,
-    },
-    {
-      id: "issuer",
-      text: "Issuer / Organization",
-      x: 680,
-      y: 550,
-      fontFamily: "Inter",
-      fontSize: 16,
-      fontStyle: "bold",
-      fill: "#1e2233",
-      align: "right",
-      width: 300,
-    },
+    { id: "certTitle", text: "Certificate of Achievement", x: CW / 2, y: 110, fontFamily: "Inter", fontSize: 44, fontStyle: "bold", fill: "#1e2233", align: "center", width: 760 },
+    { id: "subtitle", text: "", x: CW / 2, y: 165, fontFamily: "Inter", fontSize: 18, fontStyle: "normal", fill: "#2b2f44", align: "center", width: 760 },
+    { id: "name", text: "Student Name", x: CW / 2, y: 270, fontFamily: "Inter", fontSize: 38, fontStyle: "bold", fill: "#1e2233", align: "center", width: 760 },
+    { id: "description", text: "", x: CW / 2, y: 322, fontFamily: "Inter", fontSize: 16, fontStyle: "normal", fill: "#2b2f44", align: "center", width: 760 },
+    { id: "award", text: "For outstanding performance", x: CW / 2, y: 380, fontFamily: "Inter", fontSize: 20, fontStyle: "normal", fill: "#2b2f44", align: "center", width: 760 },
+    { id: "date", text: `Date: ${new Date().toISOString().slice(0, 10)}`, x: 115, y: 560, fontFamily: "Inter", fontSize: 14, fontStyle: "normal", fill: "#2b2f44", align: "left", width: 260 },
+    { id: "issuer", text: "Issuer / Organization", x: 680, y: 550, fontFamily: "Inter", fontSize: 16, fontStyle: "bold", fill: "#1e2233", align: "right", width: 300 },
   ]);
 
   function updateField(id, patch) {
@@ -153,26 +172,32 @@ export default function App() {
     );
   }, [certTitle, subtitle, description]);
 
+  // ✅ sampleRow: manual mode uses first valid row (table) for preview
   const sampleRow = useMemo(() => {
-    if (inputMode === "manual") return { name: manualName, award: manualAward, date: dateText, issuer: issuerText };
+    if (inputMode === "manual") {
+      const firstValid = manualRows.find((r) => (r.name || "").trim() && (r.award || "").trim());
+      return firstValid
+        ? { ...firstValid, date: dateText, issuer: issuerText }
+        : { name: "Student Name", award: "For outstanding performance", date: dateText, issuer: issuerText };
+    }
     return rows[0] || { name: "Student Name", award: "For outstanding performance", date: dateText, issuer: issuerText };
-  }, [inputMode, manualName, manualAward, dateText, issuerText, rows]);
+  }, [inputMode, manualRows, dateText, issuerText, rows]);
 
   // Sync row-based fields to canvas preview
- useEffect(() => {
-  const effectiveDate = sampleRow.date || dateText;      // ✅ fallback
-  const effectiveIssuer = sampleRow.issuer || issuerText; // ✅ fallback
+  useEffect(() => {
+    const effectiveDate = sampleRow.date || dateText;
+    const effectiveIssuer = sampleRow.issuer || issuerText;
 
-  setFields((prev) =>
-    prev.map((f) => {
-      if (f.id === "name") return { ...f, text: sampleRow.name || "" };
-      if (f.id === "award") return { ...f, text: sampleRow.award || "" };
-      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
-      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
-      return f;
-    })
-  );
-}, [sampleRow, issuerText, dateText]);
+    setFields((prev) =>
+      prev.map((f) => {
+        if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+        if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+        if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+        if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+        return f;
+      })
+    );
+  }, [sampleRow, issuerText, dateText]);
 
   // When paper changes, adjust stage + keep fields proportional-ish
   useEffect(() => {
@@ -263,8 +288,14 @@ export default function App() {
       const m = editorValue.match(/date:\s*(.*)$/i);
       if (m?.[1]) setDateText(m[1].trim());
     }
-    if (editingId === "name" && inputMode === "manual") setManualName(editorValue);
-    if (editingId === "award" && inputMode === "manual") setManualAward(editorValue);
+
+    // ✅ In manual mode, update the first valid row (or row 0) when editing on canvas
+    if (inputMode === "manual") {
+      const idx = manualRows.findIndex((r) => (r.name || "").trim() && (r.award || "").trim());
+      const target = idx >= 0 ? idx : 0;
+      if (editingId === "name") updateManualRow(target, { name: editorValue });
+      if (editingId === "award") updateManualRow(target, { award: editorValue });
+    }
 
     setEditingId("");
     setEditorRect(null);
@@ -289,9 +320,24 @@ export default function App() {
   }
 
   function effectiveRows() {
-    return inputMode === "manual"
-      ? [{ name: manualName, award: manualAward, date: dateText, issuer: issuerText }]
-      : rows;
+    if (inputMode === "manual") {
+      return manualRows
+        .map((r) => ({
+          name: (r.name || "").trim(),
+          award: (r.award || "").trim(),
+          date: dateText,
+          issuer: issuerText,
+        }))
+        .filter((r) => r.name && r.award);
+    }
+    return rows
+      .map((r) => ({
+        name: (r.name || "").trim(),
+        award: (r.award || "").trim(),
+        date: (r.date || dateText || "").trim(),
+        issuer: (r.issuer || issuerText || "").trim(),
+      }))
+      .filter((r) => r.name && r.award);
   }
 
   async function exportPdfPreview() {
@@ -315,33 +361,33 @@ export default function App() {
         closeEditor,
         max: MAX_PREVIEW,
         beforeEachRow: async (r) => {
-  const effectiveDate = r.date || dateText;          // ✅ fallback
-  const effectiveIssuer = r.issuer || issuerText;    // ✅ fallback
+          const effectiveDate = r.date || dateText;
+          const effectiveIssuer = r.issuer || issuerText;
 
-  setFields((prev) =>
-    prev.map((f) => {
-      if (f.id === "name") return { ...f, text: r.name || "" };
-      if (f.id === "award") return { ...f, text: r.award || "" };
-      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
-      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
-      return f;
-    })
-  );
-},
-       afterExportRestore: () => {
-  const effectiveDate = sampleRow.date || dateText;      // ✅ fallback
-  const effectiveIssuer = sampleRow.issuer || issuerText; // ✅ fallback
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: r.name || "" };
+              if (f.id === "award") return { ...f, text: r.award || "" };
+              if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+              if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+              return f;
+            })
+          );
+        },
+        afterExportRestore: () => {
+          const effectiveDate = sampleRow.date || dateText;
+          const effectiveIssuer = sampleRow.issuer || issuerText;
 
-  setFields((prev) =>
-    prev.map((f) => {
-      if (f.id === "name") return { ...f, text: sampleRow.name || "" };
-      if (f.id === "award") return { ...f, text: sampleRow.award || "" };
-      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
-      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
-      return f;
-    })
-  );
-},
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+              if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+              if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+              if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+              return f;
+            })
+          );
+        },
       });
     } catch (e) {
       setError(String(e?.message || "Export failed"));
@@ -370,34 +416,34 @@ export default function App() {
         closeEditor,
         zip,
         max: MAX_PREVIEW,
-       beforeEachRow: async (r) => {
-  const effectiveDate = r.date || dateText;          // ✅ fallback
-  const effectiveIssuer = r.issuer || issuerText;    // ✅ fallback
+        beforeEachRow: async (r) => {
+          const effectiveDate = r.date || dateText;
+          const effectiveIssuer = r.issuer || issuerText;
 
-  setFields((prev) =>
-    prev.map((f) => {
-      if (f.id === "name") return { ...f, text: r.name || "" };
-      if (f.id === "award") return { ...f, text: r.award || "" };
-      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
-      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
-      return f;
-    })
-  );
-},
-       afterExportRestore: () => {
-  const effectiveDate = sampleRow.date || dateText;      // ✅ fallback
-  const effectiveIssuer = sampleRow.issuer || issuerText; // ✅ fallback
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: r.name || "" };
+              if (f.id === "award") return { ...f, text: r.award || "" };
+              if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+              if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+              return f;
+            })
+          );
+        },
+        afterExportRestore: () => {
+          const effectiveDate = sampleRow.date || dateText;
+          const effectiveIssuer = sampleRow.issuer || issuerText;
 
-  setFields((prev) =>
-    prev.map((f) => {
-      if (f.id === "name") return { ...f, text: sampleRow.name || "" };
-      if (f.id === "award") return { ...f, text: sampleRow.award || "" };
-      if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
-      if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
-      return f;
-    })
-  );
-},
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+              if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+              if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+              if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+              return f;
+            })
+          );
+        },
       });
     } catch (e) {
       setError(String(e?.message || "Export failed"));
@@ -432,22 +478,121 @@ export default function App() {
           <div style={styles.block}>
             <label style={styles.label}>Input mode</label>
             <select style={styles.select} value={inputMode} onChange={(e) => setInputMode(e.target.value)}>
-              <option value="manual">Manual (single)</option>
+              <option value="manual">Manual (table)</option>
               <option value="upload">Upload CSV/TXT (batch)</option>
             </select>
           </div>
 
           {inputMode === "manual" ? (
-            <>
-              <div style={styles.block}>
-                <label style={styles.label}>Name</label>
-                <input style={styles.input} value={manualName} onChange={(e) => setManualName(e.target.value)} />
+            <div style={styles.block} onPaste={handleManualPaste} title="Paste Name<TAB>Title from Excel here">
+              <div style={styles.help}>
+                Add recipients in a table. Tip: paste from Excel (2 columns). Press <b>Enter</b> in Title to add a new row.
               </div>
-              <div style={styles.block}>
-                <label style={styles.label}>Title / Award</label>
-                <input style={styles.input} value={manualAward} onChange={(e) => setManualAward(e.target.value)} />
+
+              <div
+                style={{
+                  marginTop: 10,
+                  borderRadius: 14,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.04)",
+                  overflow: "hidden",
+                }}
+              >
+                {/* Header */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1.2fr 70px",
+                    gap: 10,
+                    padding: "10px 10px",
+                    borderBottom: "1px solid rgba(255,255,255,0.10)",
+                    fontSize: 12,
+                    opacity: 0.9,
+                    fontWeight: 800,
+                  }}
+                >
+                  <div>Name</div>
+                  <div>Title / Award</div>
+                  <div style={{ textAlign: "right" }}>Remove</div>
+                </div>
+
+                {/* Rows */}
+                <div style={{ maxHeight: 260, overflow: "auto" }}>
+                  {manualRows.map((r, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1.2fr 70px",
+                        gap: 10,
+                        padding: "10px 10px",
+                        borderBottom: idx === manualRows.length - 1 ? "none" : "1px solid rgba(255,255,255,0.08)",
+                        alignItems: "center",
+                      }}
+                    >
+                      <input
+                        ref={(el) => (manualNameRefs.current[idx] = el)}
+                        style={styles.input}
+                        value={r.name}
+                        placeholder={`Name #${idx + 1}`}
+                        onChange={(e) => updateManualRow(idx, { name: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            manualAwardRefs.current?.[idx]?.focus?.();
+                          }
+                        }}
+                      />
+
+                      <input
+                        ref={(el) => (manualAwardRefs.current[idx] = el)}
+                        style={styles.input}
+                        value={r.award}
+                        placeholder="Title / Award"
+                        onChange={(e) => updateManualRow(idx, { award: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            // ✅ Enter-to-new-row: only if current row has some input
+                            const hasSomething = (r.name || "").trim() || (r.award || "").trim();
+                            if (hasSomething) {
+                              addManualRow(); // focuses next row name automatically
+                            } else {
+                              // If empty, just move focus back to name
+                              manualNameRefs.current?.[idx]?.focus?.();
+                            }
+                          }
+                        }}
+                      />
+
+                      <button
+                        style={{
+                          ...styles.btnGhost,
+                          padding: "10px 10px",
+                          justifySelf: "end",
+                          opacity: manualRows.length <= 1 ? 0.5 : 1,
+                          cursor: manualRows.length <= 1 ? "not-allowed" : "pointer",
+                        }}
+                        disabled={manualRows.length <= 1}
+                        onClick={() => removeManualRow(idx)}
+                        title={manualRows.length <= 1 ? "Keep at least 1 row" : "Remove row"}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </>
+
+              <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                <button style={styles.btnPrimary} onClick={() => addManualRow()}>
+                  + Add row
+                </button>
+                <button style={styles.btnGhost} onClick={() => setManualRows([{ name: "", award: "" }])}>
+                  Clear
+                </button>
+              </div>
+            </div>
           ) : (
             <div style={styles.block}>
               <label style={styles.label}>Upload .csv or .txt</label>
@@ -510,22 +655,12 @@ export default function App() {
 
           <div style={styles.block}>
             <label style={styles.label}>Free text (below title)</label>
-            <input
-              style={styles.input}
-              value={subtitle}
-              onChange={(e) => setSubtitle(e.target.value)}
-              placeholder="(optional)"
-            />
+            <input style={styles.input} value={subtitle} onChange={(e) => setSubtitle(e.target.value)} placeholder="(optional)" />
           </div>
 
           <div style={styles.block}>
             <label style={styles.label}>Free text (below name)</label>
-            <input
-              style={styles.input}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="(optional)"
-            />
+            <input style={styles.input} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="(optional)" />
           </div>
 
           <div style={styles.block}>
@@ -566,13 +701,7 @@ export default function App() {
               openEditorFor={openEditorFor}
             />
 
-            <TextEditorOverlay
-              open={!!editingId}
-              value={editorValue}
-              onChange={setEditorValue}
-              onClose={closeEditor}
-              nodeAbsRect={editorRect}
-            />
+            <TextEditorOverlay open={!!editingId} value={editorValue} onChange={setEditorValue} onClose={closeEditor} nodeAbsRect={editorRect} />
           </div>
         </div>
 
@@ -590,11 +719,7 @@ export default function App() {
 
               <div style={styles.block}>
                 <label style={styles.label}>Text</label>
-                <input
-                  style={styles.input}
-                  value={selectedField.text}
-                  onChange={(e) => updateField(selectedField.id, { text: e.target.value })}
-                />
+                <input style={styles.input} value={selectedField.text} onChange={(e) => updateField(selectedField.id, { text: e.target.value })} />
                 <div style={styles.help}>Tip: double-click on canvas to edit faster.</div>
               </div>
 
@@ -603,17 +728,14 @@ export default function App() {
                 <select
                   style={styles.select}
                   value={selectedField.fontFamily}
-                 onChange={async (e) => {
-  const next = e.target.value;
-  updateField(selectedField.id, { fontFamily: next });
+                  onChange={async (e) => {
+                    const next = e.target.value;
+                    updateField(selectedField.id, { fontFamily: next });
 
-  // Wait for browser to actually load font file
-  const isBold = (selectedField.fontStyle || "").includes("bold");
-  await ensureFontLoaded(next, isBold ? 700 : 400);
-
-  // Force Konva redraw so the new font appears immediately
-  stageRef.current?.getLayers()?.forEach((l) => l.batchDraw());
-}}
+                    const isBold = (selectedField.fontStyle || "").includes("bold");
+                    await ensureFontLoaded(next, isBold ? 700 : 400);
+                    stageRef.current?.getLayers()?.forEach((l) => l.batchDraw());
+                  }}
                 >
                   {FONT_OPTIONS.map((f) => (
                     <option key={f.id} value={f.id}>
@@ -626,11 +748,7 @@ export default function App() {
               <div style={styles.row2}>
                 <div style={styles.block}>
                   <label style={styles.label}>Style</label>
-                  <select
-                    style={styles.select}
-                    value={selectedField.fontStyle}
-                    onChange={(e) => updateField(selectedField.id, { fontStyle: e.target.value })}
-                  >
+                  <select style={styles.select} value={selectedField.fontStyle} onChange={(e) => updateField(selectedField.id, { fontStyle: e.target.value })}>
                     <option value="normal">Normal</option>
                     <option value="bold">Bold</option>
                     <option value="italic">Italic</option>
@@ -651,11 +769,7 @@ export default function App() {
 
               <div style={styles.block}>
                 <label style={styles.label}>Alignment</label>
-                <select
-                  style={styles.select}
-                  value={selectedField.align}
-                  onChange={(e) => updateField(selectedField.id, { align: e.target.value })}
-                >
+                <select style={styles.select} value={selectedField.align} onChange={(e) => updateField(selectedField.id, { align: e.target.value })}>
                   <option value="left">Left</option>
                   <option value="center">Center</option>
                   <option value="right">Right</option>
@@ -693,15 +807,9 @@ export default function App() {
                 onClick={() => {
                   updateField(selectedField.id, {
                     fontFamily: "Inter",
-                    fontStyle:
-                      selectedField.id === "certTitle" || selectedField.id === "name" || selectedField.id === "issuer"
-                        ? "bold"
-                        : "normal",
+                    fontStyle: selectedField.id === "certTitle" || selectedField.id === "name" || selectedField.id === "issuer" ? "bold" : "normal",
                     fill:
-                      selectedField.id === "award" ||
-                      selectedField.id === "subtitle" ||
-                      selectedField.id === "description" ||
-                      selectedField.id === "date"
+                      selectedField.id === "award" || selectedField.id === "subtitle" || selectedField.id === "description" || selectedField.id === "date"
                         ? "#2b2f44"
                         : "#1e2233",
                   });
