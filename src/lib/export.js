@@ -27,14 +27,15 @@ export async function snapshotStagePngBytes({
 
   // Clear selection state so it won't reattach mid-snapshot
   setSelectedId("");
-  await new Promise((r) => setTimeout(r, 30));
+  await new Promise((r) => setTimeout(r, 50));
+  
   const dataUrl = stage.toDataURL({
-  pixelRatio: 2.5,
-  mimeType: "image/jpeg",
-  quality: 0.9,
-});
-const bytes = await (await fetch(dataUrl)).arrayBuffer();
-
+    pixelRatio: pixelRatio,  // ✅ Fixed: Use the parameter value
+    mimeType: "image/jpeg",
+    quality: 0.9,
+  });
+  
+  const bytes = await (await fetch(dataUrl)).arrayBuffer();
 
   // Restore selection + transformer
   if (tr) {
@@ -56,39 +57,56 @@ export async function exportPdfFromStage({
   setSelectedId,
   editingId,
   closeEditor,
-  beforeEachRow, // async (row) => void
-  afterExportRestore, // () => void
-  filename = "certificate_preview.pdf",
+  beforeEachRow,
+  afterExportRestore,
+  filename = "certificates.pdf",
   max = 5,
 }) {
-  const pdfDoc = await PDFDocument.create();
-  const previewRows = rows.slice(0, max);
+  try {
+    console.log("Starting PDF export...");
+    const pdfDoc = await PDFDocument.create();
+    const previewRows = rows.slice(0, max);
 
-  for (let i = 0; i < previewRows.length; i++) {
-    const r = previewRows[i];
+    console.log(`Exporting ${previewRows.length} certificates`);
 
-    if (beforeEachRow) await beforeEachRow(r);
-    await new Promise((res) => setTimeout(res, 30));
+    for (let i = 0; i < previewRows.length; i++) {
+      const r = previewRows[i];
+      console.log(`Processing certificate ${i + 1}/${previewRows.length}`);
 
-    const pngBytes = await snapshotStagePngBytes({
-      stageRef,
-      transformerRef,
-      selectedId,
-      setSelectedId,
-      editingId,
-      closeEditor,
-      pixelRatio: 2,
-    });
+      if (beforeEachRow) await beforeEachRow(r);
+      await new Promise((res) => setTimeout(res, 100)); // ✅ Increased delay for rendering
 
-    const page = pdfDoc.addPage([cw, ch]);
-    const img = await pdfDoc.embedJpg(pngBytes);
-    page.drawImage(img, { x: 0, y: 0, width: cw, height: ch });
+      const pngBytes = await snapshotStagePngBytes({
+        stageRef,
+        transformerRef,
+        selectedId,
+        setSelectedId,
+        editingId,
+        closeEditor,
+        pixelRatio: 2,
+      });
+
+      console.log(`Captured image ${i + 1}, size: ${pngBytes.byteLength} bytes`);
+
+      const page = pdfDoc.addPage([cw, ch]);
+      const img = await pdfDoc.embedJpg(pngBytes);
+      page.drawImage(img, { x: 0, y: 0, width: cw, height: ch });
+    }
+
+    console.log("Generating PDF...");
+    const pdfBytes = await pdfDoc.save();
+    console.log(`PDF generated, size: ${pdfBytes.byteLength} bytes`);
+    
+    downloadBlob(new Blob([pdfBytes], { type: "application/pdf" }), filename);
+    console.log("PDF download initiated");
+
+    if (afterExportRestore) afterExportRestore();
+    
+    return true;
+  } catch (error) {
+    console.error("PDF Export Error:", error);
+    throw new Error(`Failed to export PDF: ${error.message}`);
   }
-
-  const pdfBytes = await pdfDoc.save();
-  downloadBlob(new Blob([pdfBytes], { type: "application/pdf" }), filename);
-
-  if (afterExportRestore) afterExportRestore();
 }
 
 export async function exportZipPngFromStage({
@@ -104,40 +122,68 @@ export async function exportZipPngFromStage({
   zip,
   max = 5,
 }) {
-  const previewRows = rows.slice(0, max);
+  try {
+    console.log("Starting ZIP export...");
+    const previewRows = rows.slice(0, max);
 
-  for (let i = 0; i < previewRows.length; i++) {
-    const r = previewRows[i];
+    console.log(`Exporting ${previewRows.length} certificates`);
 
-    if (beforeEachRow) await beforeEachRow(r);
-    await new Promise((res) => setTimeout(res, 30));
+    for (let i = 0; i < previewRows.length; i++) {
+      const r = previewRows[i];
+      console.log(`Processing certificate ${i + 1}/${previewRows.length}`);
 
-    const bytes = await snapshotStagePngBytes({
-      stageRef,
-      transformerRef,
-      selectedId,
-      setSelectedId,
-      editingId,
-      closeEditor,
-      pixelRatio: 2,
-    });
+      if (beforeEachRow) await beforeEachRow(r);
+      await new Promise((res) => setTimeout(res, 100)); // ✅ Increased delay
 
-    zip.file(`certificate_${i + 1}.png`, bytes);
+      const bytes = await snapshotStagePngBytes({
+        stageRef,
+        transformerRef,
+        selectedId,
+        setSelectedId,
+        editingId,
+        closeEditor,
+        pixelRatio: 2,
+      });
+
+      console.log(`Captured PNG ${i + 1}, size: ${bytes.byteLength} bytes`);
+      zip.file(`certificate_${i + 1}.png`, bytes);
+    }
+
+    console.log("Generating ZIP...");
+    const blob = await zip.generateAsync({ type: "blob" });
+    console.log(`ZIP generated, size: ${blob.size} bytes`);
+    
+    downloadBlob(blob, "certificates.zip");
+    console.log("ZIP download initiated");
+
+    if (afterExportRestore) afterExportRestore();
+    
+    return true;
+  } catch (error) {
+    console.error("ZIP Export Error:", error);
+    throw new Error(`Failed to export ZIP: ${error.message}`);
   }
-
-  const blob = await zip.generateAsync({ type: "blob" });
-  downloadBlob(blob, "certificates_preview.zip");
-
-  if (afterExportRestore) afterExportRestore();
 }
 
 export function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  try {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up after a delay
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    
+    console.log(`Download triggered for ${filename}`);
+  } catch (error) {
+    console.error("Download Error:", error);
+    throw new Error(`Failed to download file: ${error.message}`);
+  }
 }
