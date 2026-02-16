@@ -32,7 +32,16 @@ export default function ControlPanel({
       <div className="panel-section">
         <h3 className="section-title">Configuration</h3>
         
-        
+        <div className="form-group">
+          <label className="form-label">Paper Size</label>
+          <select 
+            className="form-select" 
+            value={paper} 
+            onChange={(e) => setPaper(e.target.value)}
+          >
+            <option value="A4">A4 (210 × 297 mm)</option>
+          </select>
+        </div>
 
         <div className="form-group">
           <label className="form-label">Template</label>
