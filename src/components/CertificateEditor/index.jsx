@@ -1,0 +1,425 @@
+import React, { useState, useRef, useEffect, useMemo } from "react";
+import useImage from "use-image";
+import JSZip from "jszip";
+
+import ControlPanel from "./ControlPanel";
+import CanvasPreview from "./CanvasPreview";
+import Inspector from "./Inspector";
+import ExportPanel from "./ExportPanel";
+
+import { SIZES, FONT_OPTIONS } from "../../lib/constants";
+import { parseCsv, parseTxt } from "../../lib/parsers";
+import { ensureFontLink, ensureFontLoaded } from "../../lib/templates";
+import { exportPdfFromStage, exportZipPngFromStage } from "../../lib/export";
+
+export default function CertificateEditor({ templates }) {
+  useEffect(() => ensureFontLink(), []);
+
+  // Paper & Template
+  const [paper, setPaper] = useState("A4");
+  const { w: CW, h: CH } = SIZES[paper];
+  const [templateKey, setTemplateKey] = useState("");
+  const selectedTemplate = useMemo(
+    () => templates.find((t) => t.key === templateKey) || null,
+    [templates, templateKey]
+  );
+
+  // Background image
+  const [bg, setBg] = useState(null);
+  const [bgImage] = useImage(selectedTemplate?.url || "");
+  
+  useEffect(() => {
+    setBg(bgImage);
+  }, [bgImage]);
+
+  // Input mode
+  const [inputMode, setInputMode] = useState("manual");
+  const [uploadFile, setUploadFile] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [manualRows, setManualRows] = useState([
+    { name: "John Doe", award: "Outstanding Achievement" },
+  ]);
+
+  // Global texts
+  const [certTitle, setCertTitle] = useState("Certificate of Achievement");
+  const [subtitle, setSubtitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
+  const [issuerText, setIssuerText] = useState("Issuer Organization");
+
+  // Canvas state
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const stageRef = useRef(null);
+  const transformerRef = useRef(null);
+  const [selectedId, setSelectedId] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [editorValue, setEditorValue] = useState("");
+  const [editorRect, setEditorRect] = useState(null);
+
+  // Fields
+  const [fields, setFields] = useState(() => [
+    {
+      id: "certTitle",
+      text: "Certificate of Achievement",
+      x: CW / 2,
+      y: 110,
+      fontFamily: "Playfair Display",
+      fontSize: 48,
+      fontStyle: "bold",
+      fill: "#1a1a2e",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "subtitle",
+      text: "",
+      x: CW / 2,
+      y: 170,
+      fontFamily: "Inter",
+      fontSize: 16,
+      fontStyle: "normal",
+      fill: "#4a5568",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "name",
+      text: "John Doe",
+      x: CW / 2,
+      y: 280,
+      fontFamily: "Playfair Display",
+      fontSize: 42,
+      fontStyle: "bold",
+      fill: "#1a1a2e",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "description",
+      text: "",
+      x: CW / 2,
+      y: 335,
+      fontFamily: "Inter",
+      fontSize: 15,
+      fontStyle: "normal",
+      fill: "#4a5568",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "award",
+      text: "Outstanding Achievement",
+      x: CW / 2,
+      y: 390,
+      fontFamily: "Inter",
+      fontSize: 20,
+      fontStyle: "normal",
+      fill: "#2d3748",
+      align: "center",
+      width: 760,
+    },
+    {
+      id: "date",
+      text: `Date: ${new Date().toISOString().slice(0, 10)}`,
+      x: 115,
+      y: 560,
+      fontFamily: "Inter",
+      fontSize: 14,
+      fontStyle: "normal",
+      fill: "#4a5568",
+      align: "left",
+      width: 260,
+    },
+    {
+      id: "issuer",
+      text: "Issuer Organization",
+      x: 680,
+      y: 550,
+      fontFamily: "Inter",
+      fontSize: 16,
+      fontStyle: "bold",
+      fill: "#1a1a2e",
+      align: "right",
+      width: 300,
+    },
+  ]);
+
+  function updateField(id, patch) {
+    setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  }
+
+  // Sync global texts to fields
+  useEffect(() => {
+    setFields((prev) =>
+      prev.map((f) => {
+        if (f.id === "certTitle") return { ...f, text: certTitle };
+        if (f.id === "subtitle") return { ...f, text: subtitle };
+        if (f.id === "description") return { ...f, text: description };
+        return f;
+      })
+    );
+  }, [certTitle, subtitle, description]);
+
+  // Sample row for preview
+  const sampleRow = useMemo(() => {
+    if (inputMode === "manual") {
+      const firstValid = manualRows.find((r) => r.name?.trim() && r.award?.trim());
+      return firstValid || { name: "John Doe", award: "Outstanding Achievement", date: dateText, issuer: issuerText };
+    }
+    return rows[0] || { name: "John Doe", award: "Outstanding Achievement", date: dateText, issuer: issuerText };
+  }, [inputMode, manualRows, dateText, issuerText, rows]);
+
+  // Sync row data to canvas
+  useEffect(() => {
+    const effectiveDate = sampleRow.date || dateText;
+    const effectiveIssuer = sampleRow.issuer || issuerText;
+
+    setFields((prev) =>
+      prev.map((f) => {
+        if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+        if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+        if (f.id === "date") return { ...f, text: effectiveDate ? `Date: ${effectiveDate}` : "" };
+        if (f.id === "issuer") return { ...f, text: effectiveIssuer || "" };
+        return f;
+      })
+    );
+  }, [sampleRow, dateText, issuerText]);
+
+  // File upload handler
+  async function handleFileUpload(file) {
+    if (!file) return;
+    
+    const validTypes = ['text/plain', 'text/csv', 'application/csv'];
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    
+    if (!validTypes.includes(file.type) && !['.txt', '.csv'].includes(ext)) {
+      setError('Please upload a .txt or .csv file');
+      return;
+    }
+    
+    if (file.size > 5 * 1024 * 1024) {
+      setError('File too large (max 5MB)');
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = ext === ".csv" ? parseCsv(text) : parseTxt(text);
+      
+      if (!parsed || parsed.length === 0) {
+        setError("No valid data found in file");
+        return;
+      }
+      
+      setRows(parsed);
+      setUploadFile(file);
+      setError("");
+    } catch (err) {
+      setError(err.message || "Failed to parse file");
+    }
+  }
+
+  // Text editor overlay
+  function openEditorFor(fieldId) {
+    const field = fields.find((f) => f.id === fieldId);
+    if (!field) return;
+
+    const stage = stageRef.current;
+    const node = stage?.findOne(`#${fieldId}`);
+    if (!node) return;
+
+    const box = node.getClientRect();
+    setEditorRect(box);
+    setEditingId(fieldId);
+    setEditorValue(field.text);
+  }
+
+  function closeEditor() {
+    if (editingId && editorValue !== undefined) {
+      updateField(editingId, { text: editorValue });
+    }
+    setEditingId("");
+    setEditorValue("");
+    setEditorRect(null);
+  }
+
+  // Export handlers
+  async function handleExportPdf() {
+    setBusy(true);
+    setError("");
+    try {
+      const exportRows = inputMode === "manual" 
+        ? manualRows.filter(r => r.name?.trim() && r.award?.trim())
+        : rows;
+
+      if (exportRows.length === 0) {
+        setError("No data to export");
+        return;
+      }
+
+      await exportPdfFromStage({
+        rows: exportRows,
+        cw: CW,
+        ch: CH,
+        stageRef,
+        transformerRef,
+        selectedId,
+        setSelectedId,
+        editingId,
+        closeEditor,
+        beforeEachRow: async (row) => {
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: row.name || "" };
+              if (f.id === "award") return { ...f, text: row.award || "" };
+              if (f.id === "date") return { ...f, text: row.date ? `Date: ${row.date}` : `Date: ${dateText}` };
+              if (f.id === "issuer") return { ...f, text: row.issuer || issuerText };
+              return f;
+            })
+          );
+        },
+        afterExportRestore: () => {
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+              if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+              if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : `Date: ${dateText}` };
+              if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText };
+              return f;
+            })
+          );
+        },
+        max: 5,
+      });
+    } catch (err) {
+      setError(err.message || "Export failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleExportZip() {
+    setBusy(true);
+    setError("");
+    try {
+      const exportRows = inputMode === "manual" 
+        ? manualRows.filter(r => r.name?.trim() && r.award?.trim())
+        : rows;
+
+      if (exportRows.length === 0) {
+        setError("No data to export");
+        return;
+      }
+
+      const zip = new JSZip();
+      await exportZipPngFromStage({
+        rows: exportRows,
+        stageRef,
+        transformerRef,
+        selectedId,
+        setSelectedId,
+        editingId,
+        closeEditor,
+        beforeEachRow: async (row) => {
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: row.name || "" };
+              if (f.id === "award") return { ...f, text: row.award || "" };
+              if (f.id === "date") return { ...f, text: row.date ? `Date: ${row.date}` : `Date: ${dateText}` };
+              if (f.id === "issuer") return { ...f, text: row.issuer || issuerText };
+              return f;
+            })
+          );
+        },
+        afterExportRestore: () => {
+          setFields((prev) =>
+            prev.map((f) => {
+              if (f.id === "name") return { ...f, text: sampleRow.name || "" };
+              if (f.id === "award") return { ...f, text: sampleRow.award || "" };
+              if (f.id === "date") return { ...f, text: sampleRow.date ? `Date: ${sampleRow.date}` : `Date: ${dateText}` };
+              if (f.id === "issuer") return { ...f, text: sampleRow.issuer || issuerText };
+              return f;
+            })
+          );
+        },
+        zip,
+        max: 5,
+      });
+    } catch (err) {
+      setError(err.message || "Export failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const selectedField = fields.find((f) => f.id === selectedId);
+
+  return (
+    <div className="editor-layout">
+      <ControlPanel
+        paper={paper}
+        setPaper={setPaper}
+        templates={templates}
+        templateKey={templateKey}
+        setTemplateKey={setTemplateKey}
+        inputMode={inputMode}
+        setInputMode={setInputMode}
+        manualRows={manualRows}
+        setManualRows={setManualRows}
+        uploadFile={uploadFile}
+        handleFileUpload={handleFileUpload}
+        certTitle={certTitle}
+        setCertTitle={setCertTitle}
+        subtitle={subtitle}
+        setSubtitle={setSubtitle}
+        description={description}
+        setDescription={setDescription}
+        dateText={dateText}
+        setDateText={setDateText}
+        issuerText={issuerText}
+        setIssuerText={setIssuerText}
+        error={error}
+      />
+
+      <CanvasPreview
+        cw={CW}
+        ch={CH}
+        bg={bg}
+        fields={fields}
+        selectedId={selectedId}
+        setSelectedId={setSelectedId}
+        updateField={updateField}
+        stageRef={stageRef}
+        transformerRef={transformerRef}
+        openEditorFor={openEditorFor}
+        editingId={editingId}
+        editorValue={editorValue}
+        setEditorValue={setEditorValue}
+        closeEditor={closeEditor}
+        editorRect={editorRect}
+        paper={paper}
+      />
+
+      <div className="right-panels">
+        <Inspector
+          selectedField={selectedField}
+          updateField={updateField}
+          fontOptions={FONT_OPTIONS}
+          stageRef={stageRef}
+          ensureFontLoaded={ensureFontLoaded}
+          CW={CW}
+        />
+
+        <ExportPanel
+          inputMode={inputMode}
+          manualRows={manualRows}
+          rows={rows}
+          busy={busy}
+          handleExportPdf={handleExportPdf}
+          handleExportZip={handleExportZip}
+        />
+      </div>
+    </div>
+  );
+}
