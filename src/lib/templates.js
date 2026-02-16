@@ -1,65 +1,94 @@
-export async function ensureFontLoaded(fontFamily, weight = 400) {
-  try {
-    if (!document.fonts?.load) return;
-    // Load the font (and wait until it's ready)
-    await document.fonts.load(`${weight} 16px "${fontFamily}"`);
-    await document.fonts.ready;
-  } catch {
-    // ignore (some browsers)
-  }
-}
+// Template management with CORS support
+
 export function ensureFontLink() {
-  const id = "certifyly-fonts";
-  if (document.getElementById(id)) return;
+  const existing = document.getElementById("google-fonts-link");
+  if (existing) return;
 
   const link = document.createElement("link");
-  link.id = id;
+  link.id = "google-fonts-link";
   link.rel = "stylesheet";
   link.href =
-    "https://fonts.googleapis.com/css2?" +
-    [
-      // Existing
-      "family=Inter:wght@400;600;700;800",
-      "family=Playfair+Display:wght@400;600;700",
-      "family=Montserrat:wght@400;600;700",
-      "family=Poppins:wght@400;600;700",
-      "family=Oswald:wght@400;600;700",
-
-      // NEW – certificate fonts
-      "family=Cormorant+Garamond:wght@400;600;700",
-      "family=Libre+Baskerville:wght@400;700",
-      "family=Crimson+Pro:wght@400;600;700",
-      "family=EB+Garamond:wght@400;600;700",
-      "family=Merriweather:wght@400;700",
-      "family=Cinzel:wght@400;600;700",
-      "family=Playfair+Display+SC",
-      "family=Libre+Caslon+Display",
-      "family=Prata",
-      "family=Bodoni+Moda:wght@400;600;700",
-      "family=DM+Serif+Display",
-      "family=Source+Serif+4:wght@400;600;700",
-      "family=Lora:wght@400;600;700",
-      "family=Spectral:wght@400;600;700",
-      "family=Alegreya:wght@400;600;700",
-    ].join("&") +
-    "&display=swap";
-
+    "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=Roboto:wght@400;500;700&family=Lora:wght@400;700&family=Merriweather:wght@400;700&family=Open+Sans:wght@400;600;700&family=Montserrat:wght@400;600;700&display=swap";
   document.head.appendChild(link);
 }
 
-// Draw background “cover”
-export function coverRect(imgW, imgH, boxW, boxH) {
-  const scale = Math.max(boxW / imgW, boxH / imgH);
-  const w = imgW * scale;
-  const h = imgH * scale;
-  const x = (boxW - w) / 2;
-  const y = (boxH - h) / 2;
-  return { x, y, w, h };
+export async function ensureFontLoaded(fontFamily, fontWeight = 400) {
+  if (!document.fonts) return;
+  
+  try {
+    await document.fonts.load(`${fontWeight} 16px "${fontFamily}"`);
+  } catch (err) {
+    console.warn(`Failed to load font ${fontFamily}:`, err);
+  }
 }
 
 export async function fetchTemplates() {
-  const res = await fetch("/api/templates");
-  if (!res.ok) throw new Error(await res.text());
-  const data = await res.json();
-  return data.templates || [];
+  try {
+    const response = await fetch("/api/templates");
+    if (!response.ok) {
+      throw new Error(`Failed to fetch templates: ${response.statusText}`);
+    }
+    const data = await response.json();
+    return data;
+  } catch (err) {
+    console.error("Template fetch error:", err);
+    throw err;
+  }
+}
+
+export function coverRect(imgW, imgH, targetW, targetH) {
+  const imgAspect = imgW / imgH;
+  const targetAspect = targetW / targetH;
+
+  let w, h, x, y;
+
+  if (imgAspect > targetAspect) {
+    h = targetH;
+    w = h * imgAspect;
+    x = -(w - targetW) / 2;
+    y = 0;
+  } else {
+    w = targetW;
+    h = w / imgAspect;
+    x = 0;
+    y = -(h - targetH) / 2;
+  }
+
+  return { x, y, w, h };
+}
+
+// ✅ NEW: Load image with CORS support
+export function loadImageWithCORS(url) {
+  return new Promise((resolve, reject) => {
+    if (!url) {
+      reject(new Error("No URL provided"));
+      return;
+    }
+
+    const img = new Image();
+    
+    // ✅ CRITICAL: Enable CORS
+    img.crossOrigin = "anonymous";
+    
+    img.onload = () => {
+      console.log(`Image loaded successfully: ${url}`);
+      resolve(img);
+    };
+    
+    img.onerror = (err) => {
+      console.error(`Failed to load image: ${url}`, err);
+      // Try loading without CORS as fallback
+      const fallbackImg = new Image();
+      fallbackImg.onload = () => {
+        console.warn(`Image loaded without CORS (export may fail): ${url}`);
+        resolve(fallbackImg);
+      };
+      fallbackImg.onerror = () => {
+        reject(new Error(`Failed to load image: ${url}`));
+      };
+      fallbackImg.src = url;
+    };
+    
+    img.src = url;
+  });
 }

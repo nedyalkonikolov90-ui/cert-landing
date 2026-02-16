@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import useImage from "use-image";
 import JSZip from "jszip";
 
 import ControlPanel from "./ControlPanel";
@@ -9,7 +8,7 @@ import ExportPanel from "./ExportPanel";
 
 import { SIZES, FONT_OPTIONS } from "../../lib/constants";
 import { parseCsv, parseTxt } from "../../lib/parsers";
-import { ensureFontLink, ensureFontLoaded } from "../../lib/templates";
+import { ensureFontLink, ensureFontLoaded, loadImageWithCORS } from "../../lib/templates";
 import { exportPdfFromStage, exportZipPngFromStage } from "../../lib/export";
 
 export default function CertificateEditor({ templates }) {
@@ -24,13 +23,43 @@ export default function CertificateEditor({ templates }) {
     [templates, templateKey]
   );
 
-  // Background image
+  // Background image with CORS support
   const [bg, setBg] = useState(null);
-  const [bgImage] = useImage(selectedTemplate?.url || "");
+  const [bgLoading, setBgLoading] = useState(false);
   
+  // ✅ Load background image with CORS
   useEffect(() => {
-    setBg(bgImage);
-  }, [bgImage]);
+    if (!selectedTemplate?.url) {
+      setBg(null);
+      return;
+    }
+
+    let cancelled = false;
+    setBgLoading(true);
+
+    loadImageWithCORS(selectedTemplate.url)
+      .then((img) => {
+        if (!cancelled) {
+          setBg(img);
+          console.log("Template loaded with CORS support");
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error("Failed to load template:", err);
+          setBg(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setBgLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTemplate]);
 
   // Input mode
   const [inputMode, setInputMode] = useState("manual");
@@ -386,6 +415,7 @@ export default function CertificateEditor({ templates }) {
         cw={CW}
         ch={CH}
         bg={bg}
+        bgLoading={bgLoading}
         fields={fields}
         selectedId={selectedId}
         setSelectedId={setSelectedId}
