@@ -10,10 +10,10 @@ export async function onRequestGet({ env }) {
     const cdnBase = "https://cdn.budgetwonders.eu"; // your public R2 domain
     const templates = (list.objects || [])
       .filter((o) => o.key && !o.key.endsWith("/"))
-      .filter((o) => /\.(png|jpg|jpeg)$/i.test(o.key))
+      .filter((o) => /\.(png|jpg|jpeg|svg)$/i.test(o.key))
       .map((o) => {
         const file = o.key.split("/").pop();
-        const label = file.replace(/\.(png|jpg|jpeg)$/i, "");
+        const label = file.replace(/\.(png|jpg|jpeg|svg)$/i, "");
         return {
           key: o.key,
           label,
