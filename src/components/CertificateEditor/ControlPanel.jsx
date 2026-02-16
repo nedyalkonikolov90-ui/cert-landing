@@ -40,7 +40,6 @@ export default function ControlPanel({
             onChange={(e) => setPaper(e.target.value)}
           >
             <option value="A4">A4 (210 × 297 mm)</option>
-            <option value="Letter">Letter (8.5 × 11 in)</option>
           </select>
         </div>
 
