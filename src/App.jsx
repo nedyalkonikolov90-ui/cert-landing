@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import CertificateEditor from "./components/CertificateEditor";
-import { fetchTemplates } from "./lib/templates";
+import { fetchTemplates, loadCustomTemplates, saveCustomTemplates, createCustomTemplateFromFile } from "./lib/templates";
 import "./styles/modern.css";
 
 export default function App() {
@@ -13,7 +13,9 @@ export default function App() {
     async function loadTemplates() {
       try {
         const data = await fetchTemplates();
-        setTemplates(data);
+        const custom = loadCustomTemplates();
+        // Custom first so users see their uploads at the top
+        setTemplates([...(custom || []), ...(data || [])]);
       } catch (err) {
         setTemplatesError(err.message || "Failed to load templates");
       } finally {
@@ -23,6 +25,21 @@ export default function App() {
     loadTemplates();
   }, []);
 
+
+
+  // Add a user-uploaded template (stored locally in the browser)
+  const handleAddCustomTemplate = async (file) => {
+    const customTemplate = await createCustomTemplateFromFile(file);
+
+    // Keep only custom templates in localStorage
+    const currentCustom = loadCustomTemplates();
+    const nextCustom = [customTemplate, ...(currentCustom || [])];
+    saveCustomTemplates(nextCustom);
+
+    // Update UI list (custom first)
+    setTemplates((prev) => [customTemplate, ...(prev || [])]);
+    return customTemplate;
+  };
   return (
     <div className="app-container">
       <div className="app-header">
@@ -58,7 +75,7 @@ export default function App() {
             </button>
           </div>
         ) : (
-          <CertificateEditor templates={templates} />
+          <CertificateEditor templates={templates} onAddCustomTemplate={handleAddCustomTemplate} />
         )}
       </main>
     </div>

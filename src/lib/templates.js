@@ -92,3 +92,81 @@ export function loadImageWithCORS(url) {
     img.src = url;
   });
 }
+
+
+// ------------------------------
+// Custom user templates (local)
+// ------------------------------
+const CUSTOM_TEMPLATES_KEY = "certifyly_custom_templates_v1";
+
+export function loadCustomTemplates() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_TEMPLATES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomTemplates(templates) {
+  try {
+    localStorage.setItem(CUSTOM_TEMPLATES_KEY, JSON.stringify(templates || []));
+  } catch {
+    // If storage quota exceeded, ignore (UI should show error elsewhere)
+  }
+}
+
+function sanitizeLabel(name) {
+  const base = (name || "Custom template").trim();
+  // strip extension
+  return base.replace(/\.[a-z0-9]+$/i, "") || "Custom template";
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Creates a template object from an uploaded image (PNG/JPG/SVG/WebP).
+ * Stored as a data URL so it works offline and exports safely.
+ */
+export async function createCustomTemplateFromFile(file) {
+  if (!file) throw new Error("No file selected");
+
+  const okTypes = [
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/svg+xml",
+  ];
+
+  if (file.type && !okTypes.includes(file.type)) {
+    throw new Error("Please upload a PNG, JPG, WebP, or SVG image.");
+  }
+
+  // Basic size guard (localStorage is limited; ~5MB typical)
+  const maxBytes = 2.5 * 1024 * 1024; // keep conservative
+  if (file.size > maxBytes) {
+    throw new Error("That file is too large. Please use an image under 2.5 MB.");
+  }
+
+  const dataUrl = await fileToDataUrl(file);
+  const key = `custom-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  return {
+    key,
+    label: sanitizeLabel(file.name),
+    url: dataUrl,
+    thumbUrl: dataUrl,
+    isCustom: true,
+    createdAt: new Date().toISOString(),
+  };
+}

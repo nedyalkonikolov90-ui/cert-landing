@@ -11,7 +11,7 @@ import { parseCsv, parseTxt } from "../../lib/parsers";
 import { ensureFontLink, ensureFontLoaded, loadImageWithCORS } from "../../lib/templates";
 import { exportPdfFromStage, exportZipPngFromStage } from "../../lib/export";
 
-export default function CertificateEditor({ templates }) {
+export default function CertificateEditor({ templates, onAddCustomTemplate }) {
   useEffect(() => ensureFontLink(), []);
 
   // Paper & Template
@@ -390,6 +390,7 @@ export default function CertificateEditor({ templates }) {
         paper={paper}
         setPaper={setPaper}
         templates={templates}
+        onAddCustomTemplate={onAddCustomTemplate}
         templateKey={templateKey}
         setTemplateKey={setTemplateKey}
         inputMode={inputMode}

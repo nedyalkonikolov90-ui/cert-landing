@@ -1,60 +1,11 @@
 import React, { useRef } from "react";
 import ManualInputTable from "./ManualInputTable";
 
-function TemplateGallery({ templates, templateKey, setTemplateKey }) {
-  return (
-    <div className="template-gallery" role="radiogroup" aria-label="Certificate templates">
-      <div className="template-grid">
-        {templates.map((t) => {
-          const active = t.key === templateKey;
-          const thumbSrc = t.thumbUrl || t.thumbnailUrl || t.previewUrl || t.url;
-
-          return (
-            <button
-              key={t.key}
-              type="button"
-              className={`template-card ${active ? "active" : ""}`}
-              onClick={() => setTemplateKey(t.key)}
-              role="radio"
-              aria-checked={active}
-              title={t.label}
-            >
-              <div className="template-thumb">
-                {thumbSrc ? (
-                  <img
-                    src={thumbSrc}
-                    alt={t.label}
-                    loading="lazy"
-                    onError={(e) => {
-                      // Prevent broken-image icon while keeping the card usable.
-                      e.currentTarget.style.display = "none";
-                    }}
-                  />
-                ) : (
-                  <div className="template-thumb-fallback">No preview</div>
-                )}
-              </div>
-              <div className="template-label">{t.label}</div>
-            </button>
-          );
-        })}
-      </div>
-
-      {templateKey ? (
-        <div className="template-selected-hint">
-          Selected: <span className="template-selected-value">{templates.find((t) => t.key === templateKey)?.label}</span>
-        </div>
-      ) : (
-        <div className="template-selected-hint">Click a template thumbnail to select it.</div>
-      )}
-    </div>
-  );
-}
-
 export default function ControlPanel({
   paper,
   setPaper,
   templates,
+  onAddCustomTemplate,
   templateKey,
   setTemplateKey,
   inputMode,
@@ -95,15 +46,72 @@ export default function ControlPanel({
 
         <div className="form-group">
           <label className="form-label">Template</label>
-          {templates.length === 0 ? (
-            <div className="empty-state-mini">No templates available</div>
-          ) : (
-            <TemplateGallery
-              templates={templates}
-              templateKey={templateKey}
-              setTemplateKey={setTemplateKey}
-            />
-          )}
+
+          <div className="template-gallery">
+            <button
+              type="button"
+              className="template-card template-upload-card"
+              onClick={() => fileInputRef.current?.click()}
+              title="Upload your own template"
+            >
+              <div className="template-thumb template-upload-thumb">
+                <span className="template-upload-plus">+</span>
+              </div>
+              <div className="template-meta">
+                <div className="template-label">Upload template</div>
+                <div className="template-sub">PNG / JPG / WebP / SVG</div>
+              </div>
+            </button>
+
+            {templates.length === 0 ? (
+              <div className="empty-state-mini">No templates available</div>
+            ) : (
+              templates.map((t) => {
+                const imgSrc = t.thumbUrl || t.thumbnailUrl || t.previewUrl || t.url;
+                const active = templateKey === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className={`template-card ${active ? "active" : ""}`}
+                    onClick={() => setTemplateKey(t.key)}
+                    title={t.label}
+                  >
+                    <div className="template-thumb">
+                      {imgSrc ? <img src={imgSrc} alt={t.label} loading="lazy" /> : null}
+                    </div>
+                    <div className="template-meta">
+                      <div className="template-label">{t.label}</div>
+                      {t.isCustom ? <div className="template-sub">Your upload</div> : null}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+            style={{ display: "none" }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              try {
+                if (!onAddCustomTemplate) {
+                  throw new Error("Custom template upload is not enabled.");
+                }
+                const newTemplate = await onAddCustomTemplate(file);
+                if (newTemplate?.key) setTemplateKey(newTemplate.key);
+              } catch (err) {
+                alert(err?.message || "Failed to upload template");
+              } finally {
+                // allow re-uploading same file
+                e.target.value = "";
+              }
+            }}
+          />
         </div>
       </div>
 
