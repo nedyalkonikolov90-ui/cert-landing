@@ -1,6 +1,56 @@
 import React, { useRef } from "react";
 import ManualInputTable from "./ManualInputTable";
 
+function TemplateGallery({ templates, templateKey, setTemplateKey }) {
+  return (
+    <div className="template-gallery" role="radiogroup" aria-label="Certificate templates">
+      <div className="template-grid">
+        {templates.map((t) => {
+          const active = t.key === templateKey;
+          const thumbSrc = t.thumbUrl || t.thumbnailUrl || t.previewUrl || t.url;
+
+          return (
+            <button
+              key={t.key}
+              type="button"
+              className={`template-card ${active ? "active" : ""}`}
+              onClick={() => setTemplateKey(t.key)}
+              role="radio"
+              aria-checked={active}
+              title={t.label}
+            >
+              <div className="template-thumb">
+                {thumbSrc ? (
+                  <img
+                    src={thumbSrc}
+                    alt={t.label}
+                    loading="lazy"
+                    onError={(e) => {
+                      // Prevent broken-image icon while keeping the card usable.
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+                ) : (
+                  <div className="template-thumb-fallback">No preview</div>
+                )}
+              </div>
+              <div className="template-label">{t.label}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {templateKey ? (
+        <div className="template-selected-hint">
+          Selected: <span className="template-selected-value">{templates.find((t) => t.key === templateKey)?.label}</span>
+        </div>
+      ) : (
+        <div className="template-selected-hint">Click a template thumbnail to select it.</div>
+      )}
+    </div>
+  );
+}
+
 export default function ControlPanel({
   paper,
   setPaper,
@@ -48,18 +98,11 @@ export default function ControlPanel({
           {templates.length === 0 ? (
             <div className="empty-state-mini">No templates available</div>
           ) : (
-            <select 
-              className="form-select" 
-              value={templateKey} 
-              onChange={(e) => setTemplateKey(e.target.value)}
-            >
-              <option value="">Choose a template</option>
-              {templates.map((t) => (
-                <option key={t.key} value={t.key}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
+            <TemplateGallery
+              templates={templates}
+              templateKey={templateKey}
+              setTemplateKey={setTemplateKey}
+            />
           )}
         </div>
       </div>
