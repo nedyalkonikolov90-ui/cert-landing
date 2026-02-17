@@ -187,7 +187,13 @@ export async function exportZipPngFromStage({
       });
 
       console.log(`Captured PNG ${i + 1}, size: ${bytes.byteLength} bytes`);
-      zip.file(`certificate_${i + 1}.png`, bytes); // ✅ now really PNG
+      const safeName = (r.name || "")
+  .trim()
+  .replace(/[\\/:*?"<>|]/g, "")  // strip chars illegal on Windows/macOS/Linux
+  .replace(/\s+/g, "_")           // spaces → underscores
+  .slice(0, 100)                  // cap length
+  || `certificate_${i + 1}`;     // fallback if name was empty
+zip.file(`${safeName}.png`, bytes); // ✅ now really PNG
     }
 
     console.log("Generating ZIP...");
