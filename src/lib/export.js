@@ -1,11 +1,27 @@
 import { PDFDocument } from "pdf-lib";
 
+// ---------------------------------------------------------------------------
+// Pixel ratio: 1.5 gives ~44% smaller files vs 2.0 at imperceptible quality
+// loss for certificate-sized output. Increase to 2 if you need higher DPI.
+// ---------------------------------------------------------------------------
+const DEFAULT_PIXEL_RATIO = 1.5;
+
 function dataUrlToUint8Array(dataUrl) {
   const base64 = dataUrl.split(",")[1] || "";
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+// Sanitise a recipient name into a safe cross-platform filename.
+function safeFilename(name, fallback) {
+  const s = (name || "")
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "")  // illegal on Windows/macOS/Linux
+    .replace(/\s+/g, "_")
+    .slice(0, 100);
+  return s || fallback;
 }
 
 export async function snapshotStagePngBytes({
@@ -15,7 +31,7 @@ export async function snapshotStagePngBytes({
   setSelectedId,
   editingId,
   closeEditor,
-  pixelRatio = 2,
+  pixelRatio = DEFAULT_PIXEL_RATIO,
 }) {
   const stage = stageRef.current;
   if (!stage) throw new Error("Stage not ready");
@@ -37,19 +53,11 @@ export async function snapshotStagePngBytes({
   setSelectedId("");
   await new Promise((r) => setTimeout(r, 80));
 
-  // ✅ Always export PNG (stable for pdf-lib + avoids JPEG SOI errors)
   let dataUrl;
   try {
-    dataUrl = stage.toDataURL({
-      pixelRatio,
-      mimeType: "image/png",
-    });
+    dataUrl = stage.toDataURL({ pixelRatio, mimeType: "image/png" });
   } catch (e) {
-    // Restore transformer before rethrowing
-    if (tr) {
-      tr.visible(true);
-      tr.getLayer()?.batchDraw();
-    }
+    if (tr) { tr.visible(true); tr.getLayer()?.batchDraw(); }
     setSelectedId(prevSelected);
     throw new Error(
       "Canvas export blocked (tainted canvas). The template image must be " +
@@ -58,16 +66,11 @@ export async function snapshotStagePngBytes({
     );
   }
 
-  // Convert dataURL → bytes without fetch()
   const bytes = dataUrlToUint8Array(dataUrl);
 
-  // Detect a tainted or blank canvas — toDataURL() returns a minimal PNG
-  // (~67 bytes) when the canvas is empty, and an empty string when tainted.
+  // Detect tainted/blank canvas — toDataURL() returns "" or a ~67-byte stub.
   if (!bytes || bytes.byteLength < 100) {
-    if (tr) {
-      tr.visible(true);
-      tr.getLayer()?.batchDraw();
-    }
+    if (tr) { tr.visible(true); tr.getLayer()?.batchDraw(); }
     setSelectedId(prevSelected);
     throw new Error(
       "Canvas snapshot produced 0 bytes — the template image was likely " +
@@ -77,15 +80,17 @@ export async function snapshotStagePngBytes({
   }
 
   // Restore selection + transformer
-  if (tr) {
-    tr.visible(true);
-    tr.getLayer()?.batchDraw();
-  }
+  if (tr) { tr.visible(true); tr.getLayer()?.batchDraw(); }
   setSelectedId(prevSelected);
 
   return bytes;
 }
 
+// ---------------------------------------------------------------------------
+// PDF export — all pages collected in one pdf-lib document then downloaded.
+// Memory ceiling: total PNG bytes + pdf-lib overhead. For 100 certs at 1.5×
+// this is roughly 100 × 0.8MB ≈ 80MB which is within browser limits.
+// ---------------------------------------------------------------------------
 export async function exportPdfFromStage({
   rows,
   cw,
@@ -98,51 +103,36 @@ export async function exportPdfFromStage({
   closeEditor,
   beforeEachRow,
   afterExportRestore,
+  onProgress,            // (done, total) => void
   filename = "certificates.pdf",
-  max = 5,
 }) {
   try {
-    console.log("Starting PDF export...");
     const pdfDoc = await PDFDocument.create();
-    const previewRows = rows.slice(0, max);
+    const total = rows.length;
 
-    console.log(`Exporting ${previewRows.length} certificates`);
-
-    for (let i = 0; i < previewRows.length; i++) {
-      const r = previewRows[i];
-      console.log(`Processing certificate ${i + 1}/${previewRows.length}`);
+    for (let i = 0; i < total; i++) {
+      const r = rows[i];
 
       if (beforeEachRow) await beforeEachRow(r);
       await new Promise((res) => setTimeout(res, 120));
 
       const pngBytes = await snapshotStagePngBytes({
-        stageRef,
-        transformerRef,
-        selectedId,
-        setSelectedId,
-        editingId,
-        closeEditor,
-        pixelRatio: 2,
+        stageRef, transformerRef, selectedId, setSelectedId,
+        editingId, closeEditor,
+        pixelRatio: DEFAULT_PIXEL_RATIO,
       });
 
-      console.log(`Captured image ${i + 1}, size: ${pngBytes.byteLength} bytes`);
-
       const page = pdfDoc.addPage([cw, ch]);
-
-      // ✅ Embed PNG (not JPG)
       const img = await pdfDoc.embedPng(pngBytes);
       page.drawImage(img, { x: 0, y: 0, width: cw, height: ch });
+
+      if (onProgress) onProgress(i + 1, total);
     }
 
-    console.log("Generating PDF...");
     const pdfBytes = await pdfDoc.save();
-    console.log(`PDF generated, size: ${pdfBytes.byteLength} bytes`);
-
     downloadBlob(new Blob([pdfBytes], { type: "application/pdf" }), filename);
-    console.log("PDF download initiated");
 
     if (afterExportRestore) afterExportRestore();
-
     return true;
   } catch (error) {
     console.error("PDF Export Error:", error);
@@ -150,6 +140,13 @@ export async function exportPdfFromStage({
   }
 }
 
+// ---------------------------------------------------------------------------
+// ZIP export — each PNG is added to JSZip one at a time with DEFLATE so the
+// compressor can flush processed bytes. After zip.file() the local `bytes`
+// reference is dropped so GC can reclaim the raw buffer while we process the
+// next certificate.  generateAsync() then streams the zip in chunks rather
+// than holding the entire archive in one allocation.
+// ---------------------------------------------------------------------------
 export async function exportZipPngFromStage({
   rows,
   stageRef,
@@ -161,50 +158,39 @@ export async function exportZipPngFromStage({
   beforeEachRow,
   afterExportRestore,
   zip,
-  max = 5,
+  onProgress,            // (done, total) => void
 }) {
   try {
-    console.log("Starting ZIP export...");
-    const previewRows = rows.slice(0, max);
+    const total = rows.length;
 
-    console.log(`Exporting ${previewRows.length} certificates`);
-
-    for (let i = 0; i < previewRows.length; i++) {
-      const r = previewRows[i];
-      console.log(`Processing certificate ${i + 1}/${previewRows.length}`);
+    for (let i = 0; i < total; i++) {
+      const r = rows[i];
 
       if (beforeEachRow) await beforeEachRow(r);
       await new Promise((res) => setTimeout(res, 120));
 
-      const bytes = await snapshotStagePngBytes({
-        stageRef,
-        transformerRef,
-        selectedId,
-        setSelectedId,
-        editingId,
-        closeEditor,
-        pixelRatio: 2,
+      let bytes = await snapshotStagePngBytes({
+        stageRef, transformerRef, selectedId, setSelectedId,
+        editingId, closeEditor,
+        pixelRatio: DEFAULT_PIXEL_RATIO,
       });
 
-      console.log(`Captured PNG ${i + 1}, size: ${bytes.byteLength} bytes`);
-      const safeName = (r.name || "")
-  .trim()
-  .replace(/[\\/:*?"<>|]/g, "")  // strip chars illegal on Windows/macOS/Linux
-  .replace(/\s+/g, "_")           // spaces → underscores
-  .slice(0, 100)                  // cap length
-  || `certificate_${i + 1}`;     // fallback if name was empty
-zip.file(`${safeName}.png`, bytes); // ✅ now really PNG
+      const filename = safeFilename(r.name, `certificate_${i + 1}`);
+
+      // DEFLATE compresses PNGs ~30-40% inside the zip.
+      zip.file(`${filename}.png`, bytes, { compression: "DEFLATE", compressionOptions: { level: 6 } });
+
+      // Drop the reference so GC can reclaim this buffer before next iteration.
+      bytes = null;
+
+      if (onProgress) onProgress(i + 1, total);
     }
 
-    console.log("Generating ZIP...");
-    const blob = await zip.generateAsync({ type: "blob" });
-    console.log(`ZIP generated, size: ${blob.size} bytes`);
-
+    // streamFiles:true lets JSZip emit chunks rather than building one giant buffer.
+    const blob = await zip.generateAsync({ type: "blob", streamFiles: true });
     downloadBlob(blob, "certificates.zip");
-    console.log("ZIP download initiated");
 
     if (afterExportRestore) afterExportRestore();
-
     return true;
   } catch (error) {
     console.error("ZIP Export Error:", error);

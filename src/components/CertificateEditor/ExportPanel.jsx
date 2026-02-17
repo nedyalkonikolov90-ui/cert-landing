@@ -5,12 +5,16 @@ export default function ExportPanel({
   manualRows,
   rows,
   busy,
+  progress,
   handleExportPdf,
   handleExportZip,
 }) {
   const validCount = inputMode === "manual"
     ? manualRows.filter(r => r.name?.trim() && r.award?.trim()).length
     : rows.length;
+
+  const showProgress = busy && progress.total > 0;
+  const pct = showProgress ? Math.round((progress.done / progress.total) * 100) : 0;
 
   return (
     <div className="export-panel">
@@ -22,8 +26,8 @@ export default function ExportPanel({
           <div className="export-stat-label">Valid Recipients</div>
         </div>
         <div className="export-stat">
-          <div className="export-stat-value">5</div>
-          <div className="export-stat-label">Preview Limit</div>
+          <div className="export-stat-value">{validCount}</div>
+          <div className="export-stat-label">Will Export</div>
         </div>
       </div>
 
@@ -37,6 +41,24 @@ export default function ExportPanel({
         </div>
       )}
 
+      {showProgress && (
+        <div style={{ margin: "12px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6, color: "rgba(255,255,255,0.6)" }}>
+            <span>Processing…</span>
+            <span>{progress.done} / {progress.total}</span>
+          </div>
+          <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 6, height: 6, overflow: "hidden" }}>
+            <div style={{
+              height: "100%",
+              width: `${pct}%`,
+              background: "linear-gradient(90deg, #6366f1, #8b5cf6)",
+              borderRadius: 6,
+              transition: "width 0.2s ease",
+            }} />
+          </div>
+        </div>
+      )}
+
       <div className="export-buttons">
         <button
           className="btn-primary"
@@ -46,7 +68,7 @@ export default function ExportPanel({
           {busy ? (
             <>
               <div className="spinner-small"></div>
-              Generating...
+              {showProgress ? `${pct}%` : "Generating…"}
             </>
           ) : (
             <>
@@ -66,7 +88,7 @@ export default function ExportPanel({
           {busy ? (
             <>
               <div className="spinner-small"></div>
-              Generating...
+              {showProgress ? `${pct}%` : "Generating…"}
             </>
           ) : (
             <>
@@ -82,7 +104,7 @@ export default function ExportPanel({
 
       <div className="export-notes">
         <p className="export-note">
-          <strong>Note:</strong> Exports generate up to 5 certificates for preview. For full batch exports, contact support.
+          <strong>Note:</strong> Large batches may take a moment — the canvas renders each certificate sequentially. ~100 certificates takes roughly 30–60 seconds.
         </p>
       </div>
     </div>

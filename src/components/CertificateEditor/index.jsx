@@ -36,24 +36,25 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
 
     let cancelled = false;
     setBgLoading(true);
+    setError("");
 
     loadImageWithCORS(selectedTemplate.url)
       .then((img) => {
-        if (!cancelled) {
-          setBg(img);
-          console.log("Template loaded with CORS support");
-        }
+        if (!cancelled) setBg(img);
       })
       .catch((err) => {
         if (!cancelled) {
           console.error("Failed to load template:", err);
           setBg(null);
+          setError(
+            "Could not load template for export (CORS error). " +
+            "The template will display in preview but may not export. " +
+            "Ask your admin to enable CORS on the CDN or use the proxy endpoint."
+          );
         }
       })
       .finally(() => {
-        if (!cancelled) {
-          setBgLoading(false);
-        }
+        if (!cancelled) setBgLoading(false);
       });
 
     return () => {
@@ -79,6 +80,7 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
   // Canvas state
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const stageRef = useRef(null);
   const transformerRef = useRef(null);
   const [selectedId, setSelectedId] = useState("");
@@ -277,6 +279,7 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
   async function handleExportPdf() {
     setBusy(true);
     setError("");
+    setProgress({ done: 0, total: 0 });
     try {
       const exportRows = inputMode === "manual" 
         ? manualRows.filter(r => r.name?.trim() && r.award?.trim())
@@ -286,6 +289,8 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
         setError("No data to export");
         return;
       }
+
+      setProgress({ done: 0, total: exportRows.length });
 
       await exportPdfFromStage({
         rows: exportRows,
@@ -297,6 +302,7 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
         setSelectedId,
         editingId,
         closeEditor,
+        onProgress: (done, total) => setProgress({ done, total }),
         beforeEachRow: async (row) => {
           setFields((prev) =>
             prev.map((f) => {
@@ -319,18 +325,19 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
             })
           );
         },
-        max: 5,
       });
     } catch (err) {
       setError(err.message || "Export failed");
     } finally {
       setBusy(false);
+      setProgress({ done: 0, total: 0 });
     }
   }
 
   async function handleExportZip() {
     setBusy(true);
     setError("");
+    setProgress({ done: 0, total: 0 });
     try {
       const exportRows = inputMode === "manual" 
         ? manualRows.filter(r => r.name?.trim() && r.award?.trim())
@@ -341,6 +348,8 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
         return;
       }
 
+      setProgress({ done: 0, total: exportRows.length });
+
       const zip = new JSZip();
       await exportZipPngFromStage({
         rows: exportRows,
@@ -350,6 +359,7 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
         setSelectedId,
         editingId,
         closeEditor,
+        onProgress: (done, total) => setProgress({ done, total }),
         beforeEachRow: async (row) => {
           setFields((prev) =>
             prev.map((f) => {
@@ -373,12 +383,12 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
           );
         },
         zip,
-        max: 5,
       });
     } catch (err) {
       setError(err.message || "Export failed");
     } finally {
       setBusy(false);
+      setProgress({ done: 0, total: 0 });
     }
   }
 
@@ -447,6 +457,7 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
           manualRows={manualRows}
           rows={rows}
           busy={busy}
+          progress={progress}
           handleExportPdf={handleExportPdf}
           handleExportZip={handleExportZip}
         />
