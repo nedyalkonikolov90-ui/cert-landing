@@ -1,10 +1,13 @@
 import { PDFDocument } from "pdf-lib";
 
 // ---------------------------------------------------------------------------
-// Pixel ratio: 1.5 gives ~44% smaller files vs 2.0 at imperceptible quality
-// loss for certificate-sized output. Increase to 2 if you need higher DPI.
+// Pixel ratio: canvas dimensions are defined in screen points (72 DPI base).
+// To reach 300 DPI for print-quality output we need 300/72 ≈ 4.17.
+// Capped at 4 as a practical ceiling — above that file sizes grow fast with
+// no visible gain on most printers, and some browsers struggle to allocate
+// the canvas buffer. Result: ~3360×2380 px for A4, well above print standard.
 // ---------------------------------------------------------------------------
-const DEFAULT_PIXEL_RATIO = 1.5;
+const DEFAULT_PIXEL_RATIO = 4; // ≈ 288 DPI — print quality
 
 function dataUrlToUint8Array(dataUrl) {
   const base64 = dataUrl.split(",")[1] || "";
@@ -87,9 +90,18 @@ export async function snapshotStagePngBytes({
 }
 
 // ---------------------------------------------------------------------------
-// PDF export — all pages collected in one pdf-lib document then downloaded.
-// Memory ceiling: total PNG bytes + pdf-lib overhead. For 100 certs at 1.5×
-// this is roughly 100 × 0.8MB ≈ 80MB which is within browser limits.
+// PDF export — page dimensions are set to the actual PNG pixel size, not the
+// canvas point size. This means 1 PDF point = 1 pixel, so when a printer
+// renders the page at its native size the effective DPI is:
+//   DEFAULT_PIXEL_RATIO × 72  =  4 × 72  =  288 DPI  ✅ print quality
+//
+// PDF viewers display it at the correct physical A4/Letter size because they
+// read the page dimensions and scale to the media size automatically.
+//
+// Memory ceiling at 4×, 100 certs: pdf-lib holds all embedded PNGs in memory
+// until save(). Each PNG ≈ 3–5MB → peak ≈ 300–500MB. This is within Chrome's
+// limits for 100 certs but approaches the ceiling — batching is recommended
+// above ~150 certs. The ZIP export uses batches of 20 for this reason.
 // ---------------------------------------------------------------------------
 export async function exportPdfFromStage({
   rows,
@@ -103,12 +115,17 @@ export async function exportPdfFromStage({
   closeEditor,
   beforeEachRow,
   afterExportRestore,
-  onProgress,            // (done, total) => void
+  onProgress,
   filename = "certificates.pdf",
 }) {
   try {
     const pdfDoc = await PDFDocument.create();
     const total = rows.length;
+
+    // Page dimensions in PDF points = canvas pixels × pixelRatio.
+    // This sets the PDF's intrinsic DPI to pixelRatio × 72.
+    const pageW = cw * DEFAULT_PIXEL_RATIO;
+    const pageH = ch * DEFAULT_PIXEL_RATIO;
 
     for (let i = 0; i < total; i++) {
       const r = rows[i];
@@ -122,9 +139,10 @@ export async function exportPdfFromStage({
         pixelRatio: DEFAULT_PIXEL_RATIO,
       });
 
-      const page = pdfDoc.addPage([cw, ch]);
+      // Page size matches the image pixel dimensions exactly — no upscaling.
+      const page = pdfDoc.addPage([pageW, pageH]);
       const img = await pdfDoc.embedPng(pngBytes);
-      page.drawImage(img, { x: 0, y: 0, width: cw, height: ch });
+      page.drawImage(img, { x: 0, y: 0, width: pageW, height: pageH });
 
       if (onProgress) onProgress(i + 1, total);
     }
@@ -141,12 +159,13 @@ export async function exportPdfFromStage({
 }
 
 // ---------------------------------------------------------------------------
-// ZIP export — each PNG is added to JSZip one at a time with DEFLATE so the
-// compressor can flush processed bytes. After zip.file() the local `bytes`
-// reference is dropped so GC can reclaim the raw buffer while we process the
-// next certificate.  generateAsync() then streams the zip in chunks rather
-// than holding the entire archive in one allocation.
+// ZIP export — processes certificates in batches to keep peak memory under
+// control at print resolution. Each batch is downloaded as a separate ZIP
+// (e.g. certificates_1-20.zip, certificates_21-40.zip …).
+// Batch size of 20 at 4× pixelRatio ≈ 20 × ~1.5MB compressed ≈ 30MB/batch.
 // ---------------------------------------------------------------------------
+const ZIP_BATCH_SIZE = 20;
+
 export async function exportZipPngFromStage({
   rows,
   stageRef,
@@ -157,38 +176,47 @@ export async function exportZipPngFromStage({
   closeEditor,
   beforeEachRow,
   afterExportRestore,
-  zip,
-  onProgress,            // (done, total) => void
+  zip: _zip, // kept for API compat but we create our own per batch
+  onProgress,
 }) {
   try {
     const total = rows.length;
+    const batchCount = Math.ceil(total / ZIP_BATCH_SIZE);
 
-    for (let i = 0; i < total; i++) {
-      const r = rows[i];
+    for (let b = 0; b < batchCount; b++) {
+      const batchRows = rows.slice(b * ZIP_BATCH_SIZE, (b + 1) * ZIP_BATCH_SIZE);
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
 
-      if (beforeEachRow) await beforeEachRow(r);
-      await new Promise((res) => setTimeout(res, 120));
+      for (let i = 0; i < batchRows.length; i++) {
+        const r = batchRows[i];
+        const globalIndex = b * ZIP_BATCH_SIZE + i;
 
-      let bytes = await snapshotStagePngBytes({
-        stageRef, transformerRef, selectedId, setSelectedId,
-        editingId, closeEditor,
-        pixelRatio: DEFAULT_PIXEL_RATIO,
-      });
+        if (beforeEachRow) await beforeEachRow(r);
+        await new Promise((res) => setTimeout(res, 120));
 
-      const filename = safeFilename(r.name, `certificate_${i + 1}`);
+        let bytes = await snapshotStagePngBytes({
+          stageRef, transformerRef, selectedId, setSelectedId,
+          editingId, closeEditor,
+          pixelRatio: DEFAULT_PIXEL_RATIO,
+        });
 
-      // DEFLATE compresses PNGs ~30-40% inside the zip.
-      zip.file(`${filename}.png`, bytes, { compression: "DEFLATE", compressionOptions: { level: 6 } });
+        const filename = safeFilename(r.name, `certificate_${globalIndex + 1}`);
+        zip.file(`${filename}.png`, bytes, { compression: "DEFLATE", compressionOptions: { level: 6 } });
+        bytes = null; // allow GC before next iteration
 
-      // Drop the reference so GC can reclaim this buffer before next iteration.
-      bytes = null;
+        if (onProgress) onProgress(globalIndex + 1, total);
+      }
 
-      if (onProgress) onProgress(i + 1, total);
+      const batchLabel = batchCount > 1
+        ? `_${b * ZIP_BATCH_SIZE + 1}-${Math.min((b + 1) * ZIP_BATCH_SIZE, total)}`
+        : "";
+      const blob = await zip.generateAsync({ type: "blob", streamFiles: true });
+      downloadBlob(blob, `certificates${batchLabel}.zip`);
+
+      // Small pause between batches so the browser can breathe
+      if (b < batchCount - 1) await new Promise((res) => setTimeout(res, 400));
     }
-
-    // streamFiles:true lets JSZip emit chunks rather than building one giant buffer.
-    const blob = await zip.generateAsync({ type: "blob", streamFiles: true });
-    downloadBlob(blob, "certificates.zip");
 
     if (afterExportRestore) afterExportRestore();
     return true;

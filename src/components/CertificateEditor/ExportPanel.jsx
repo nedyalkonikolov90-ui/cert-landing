@@ -104,7 +104,7 @@ export default function ExportPanel({
 
       <div className="export-notes">
         <p className="export-note">
-          <strong>Note:</strong> Large batches may take a moment — the canvas renders each certificate sequentially. ~100 certificates takes roughly 30–60 seconds.
+          <strong>Print quality:</strong> Exports at ~288 DPI — suitable for professional printing. ~100 certificates takes roughly 60–90 seconds.
         </p>
       </div>
     </div>

@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import JSZip from "jszip";
 
 import ControlPanel from "./ControlPanel";
 import CanvasPreview from "./CanvasPreview";
@@ -350,7 +349,6 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
 
       setProgress({ done: 0, total: exportRows.length });
 
-      const zip = new JSZip();
       await exportZipPngFromStage({
         rows: exportRows,
         stageRef,
@@ -382,7 +380,6 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
             })
           );
         },
-        zip,
       });
     } catch (err) {
       setError(err.message || "Export failed");
