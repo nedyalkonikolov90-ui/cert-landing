@@ -64,7 +64,11 @@ export async function fetchTemplates() {
   return data.templates || [];
 }
 
-// ✅ NEW: Load image with CORS for export
+// ✅ Load image with CORS for export.
+// IMPORTANT: Never fall back to a non-CORS load. If an image loads without
+// crossOrigin="anonymous", the browser permanently marks the canvas as
+// "tainted" and toDataURL() throws — producing 0 bytes and a "not a PNG"
+// error on export. We must either succeed with CORS or throw.
 export function loadImageWithCORS(url) {
   return new Promise((resolve, reject) => {
     if (!url) {
@@ -76,20 +80,24 @@ export function loadImageWithCORS(url) {
     img.crossOrigin = "anonymous";
 
     img.onload = () => {
-      console.log("Template loaded with CORS support");
       resolve(img);
     };
 
     img.onerror = () => {
-      // Fallback: try without CORS (preview will work, export may not)
-      console.warn("CORS load failed, falling back to non-CORS load");
-      const fallback = new Image();
-      fallback.onload = () => resolve(fallback);
-      fallback.onerror = () => reject(new Error(`Failed to load image: ${url}`));
-      fallback.src = url;
+      reject(
+        new Error(
+          `Failed to load template image with CORS. ` +
+          `Make sure the server at "${new URL(url).origin}" ` +
+          `returns an "Access-Control-Allow-Origin: *" header.`
+        )
+      );
     };
 
-    img.src = url;
+    // Cache-bust so the browser doesn't reuse a non-CORS cached response.
+    // Browsers may have cached the image without the CORS flag, which would
+    // cause crossOrigin="anonymous" to fail even if the server now sends the header.
+    const sep = url.includes("?") ? "&" : "?";
+    img.src = url + sep + "_cb=" + Date.now();
   });
 }
 

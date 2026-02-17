@@ -38,13 +38,43 @@ export async function snapshotStagePngBytes({
   await new Promise((r) => setTimeout(r, 80));
 
   // ✅ Always export PNG (stable for pdf-lib + avoids JPEG SOI errors)
-  const dataUrl = stage.toDataURL({
-    pixelRatio,
-    mimeType: "image/png",
-  });
+  let dataUrl;
+  try {
+    dataUrl = stage.toDataURL({
+      pixelRatio,
+      mimeType: "image/png",
+    });
+  } catch (e) {
+    // Restore transformer before rethrowing
+    if (tr) {
+      tr.visible(true);
+      tr.getLayer()?.batchDraw();
+    }
+    setSelectedId(prevSelected);
+    throw new Error(
+      "Canvas export blocked (tainted canvas). The template image must be " +
+      "served with an Access-Control-Allow-Origin header. " +
+      "Original error: " + e.message
+    );
+  }
 
   // Convert dataURL → bytes without fetch()
   const bytes = dataUrlToUint8Array(dataUrl);
+
+  // Detect a tainted or blank canvas — toDataURL() returns a minimal PNG
+  // (~67 bytes) when the canvas is empty, and an empty string when tainted.
+  if (!bytes || bytes.byteLength < 100) {
+    if (tr) {
+      tr.visible(true);
+      tr.getLayer()?.batchDraw();
+    }
+    setSelectedId(prevSelected);
+    throw new Error(
+      "Canvas snapshot produced 0 bytes — the template image was likely " +
+      "loaded without CORS, tainting the canvas. Ensure the template URL " +
+      "returns Access-Control-Allow-Origin: * and reload the page."
+    );
+  }
 
   // Restore selection + transformer
   if (tr) {
