@@ -1,5 +1,13 @@
 import { PDFDocument } from "pdf-lib";
 
+function dataUrlToUint8Array(dataUrl) {
+  const base64 = dataUrl.split(",")[1] || "";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 export async function snapshotStagePngBytes({
   stageRef,
   transformerRef,
@@ -12,7 +20,7 @@ export async function snapshotStagePngBytes({
   const stage = stageRef.current;
   if (!stage) throw new Error("Stage not ready");
 
-  // Close HTML textarea overlay if open (not part of canvas, but keeps state consistent)
+  // Close HTML textarea overlay if open (not part of canvas)
   if (editingId) closeEditor();
 
   const tr = transformerRef.current;
@@ -27,15 +35,16 @@ export async function snapshotStagePngBytes({
 
   // Clear selection state so it won't reattach mid-snapshot
   setSelectedId("");
-  await new Promise((r) => setTimeout(r, 50));
-  
+  await new Promise((r) => setTimeout(r, 80));
+
+  // ✅ Always export PNG (stable for pdf-lib + avoids JPEG SOI errors)
   const dataUrl = stage.toDataURL({
-    pixelRatio: pixelRatio,  // ✅ Fixed: Use the parameter value
-    mimeType: "image/jpeg",
-    quality: 0.9,
+    pixelRatio,
+    mimeType: "image/png",
   });
-  
-  const bytes = await (await fetch(dataUrl)).arrayBuffer();
+
+  // Convert dataURL → bytes without fetch()
+  const bytes = dataUrlToUint8Array(dataUrl);
 
   // Restore selection + transformer
   if (tr) {
@@ -74,7 +83,7 @@ export async function exportPdfFromStage({
       console.log(`Processing certificate ${i + 1}/${previewRows.length}`);
 
       if (beforeEachRow) await beforeEachRow(r);
-      await new Promise((res) => setTimeout(res, 100)); // ✅ Increased delay for rendering
+      await new Promise((res) => setTimeout(res, 120));
 
       const pngBytes = await snapshotStagePngBytes({
         stageRef,
@@ -89,23 +98,25 @@ export async function exportPdfFromStage({
       console.log(`Captured image ${i + 1}, size: ${pngBytes.byteLength} bytes`);
 
       const page = pdfDoc.addPage([cw, ch]);
-      const img = await pdfDoc.embedJpg(pngBytes);
+
+      // ✅ Embed PNG (not JPG)
+      const img = await pdfDoc.embedPng(pngBytes);
       page.drawImage(img, { x: 0, y: 0, width: cw, height: ch });
     }
 
     console.log("Generating PDF...");
     const pdfBytes = await pdfDoc.save();
     console.log(`PDF generated, size: ${pdfBytes.byteLength} bytes`);
-    
+
     downloadBlob(new Blob([pdfBytes], { type: "application/pdf" }), filename);
     console.log("PDF download initiated");
 
     if (afterExportRestore) afterExportRestore();
-    
+
     return true;
   } catch (error) {
     console.error("PDF Export Error:", error);
-    throw new Error(`Failed to export PDF: ${error.message}`);
+    throw new Error(`Failed to export PDF: ${error?.message || error}`);
   }
 }
 
@@ -133,7 +144,7 @@ export async function exportZipPngFromStage({
       console.log(`Processing certificate ${i + 1}/${previewRows.length}`);
 
       if (beforeEachRow) await beforeEachRow(r);
-      await new Promise((res) => setTimeout(res, 100)); // ✅ Increased delay
+      await new Promise((res) => setTimeout(res, 120));
 
       const bytes = await snapshotStagePngBytes({
         stageRef,
@@ -146,44 +157,36 @@ export async function exportZipPngFromStage({
       });
 
       console.log(`Captured PNG ${i + 1}, size: ${bytes.byteLength} bytes`);
-      zip.file(`certificate_${i + 1}.png`, bytes);
+      zip.file(`certificate_${i + 1}.png`, bytes); // ✅ now really PNG
     }
 
     console.log("Generating ZIP...");
     const blob = await zip.generateAsync({ type: "blob" });
     console.log(`ZIP generated, size: ${blob.size} bytes`);
-    
+
     downloadBlob(blob, "certificates.zip");
     console.log("ZIP download initiated");
 
     if (afterExportRestore) afterExportRestore();
-    
+
     return true;
   } catch (error) {
     console.error("ZIP Export Error:", error);
-    throw new Error(`Failed to export ZIP: ${error.message}`);
+    throw new Error(`Failed to export ZIP: ${error?.message || error}`);
   }
 }
 
 export function downloadBlob(blob, filename) {
-  try {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    
-    // Clean up after a delay
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-    
-    console.log(`Download triggered for ${filename}`);
-  } catch (error) {
-    console.error("Download Error:", error);
-    throw new Error(`Failed to download file: ${error.message}`);
-  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 150);
 }
