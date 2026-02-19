@@ -53,7 +53,7 @@ export default function CertificateStage({
               return <KImage image={bg} x={r.x} y={r.y} width={r.w} height={r.h} listening={false} />;
             })()
           ) : (
-            <KText text="Loading template…" x={20} y={20} fontFamily="Inter" fontSize={16} fill="#6b7280" />
+            <KText text="Loading template…" x={20} y={20} fontFamily="Inter" fontSize={16} fill="#e5edfd" />
           )}
 
           {/* text fields */}
