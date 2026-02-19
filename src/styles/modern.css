@@ -198,7 +198,7 @@ body {
 
 .editor-layout {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 320px;
+  grid-template-columns: 380px minmax(0, 1fr) 320px;
   gap: var(--space-lg);
   max-width: var(--container-2xl);
   margin: 0 auto;
@@ -207,7 +207,7 @@ body {
 
 @media (max-width: 1400px) {
   .editor-layout {
-    grid-template-columns: 280px minmax(0, 1fr) 280px;
+    grid-template-columns: 340px minmax(0, 1fr) 300px;
     gap: var(--space-md);
   }
 }
@@ -404,7 +404,7 @@ body {
 }
 
 .template-gallery.thumbs-only {
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--space-sm);
 }
 
@@ -774,8 +774,8 @@ button:disabled {
   justify-content: center;
   align-items: center;
   background: var(--bg-surface);
-  padding: var(--space-lg);
-  min-height: 400px;
+  padding: var(--space-xl);
+  min-height: 550px;
   position: relative;
   overflow: hidden;
 }

@@ -35,11 +35,11 @@ export default function CertificateStage({
   }, [selectedId, fields, stageRef, transformerRef]);
 
   // Calculate dynamic scale to fit canvas in container
-  // Max container width is roughly 800px for the middle column
-  const maxContainerWidth = 800;
-  const maxContainerHeight = 600;
+  // Max container width is roughly 1000px for the larger middle column
+  const maxContainerWidth = 1000;
+  const maxContainerHeight = 700;
   
-  let scale = 0.8; // default for A4/Letter
+  let scale = 0.9; // increased default for A4/Letter to use more space
   
   if (paper === "CUSTOM") {
     // For custom sizes, calculate scale to fit within container
