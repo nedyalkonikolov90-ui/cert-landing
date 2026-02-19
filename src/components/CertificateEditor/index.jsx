@@ -102,93 +102,98 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
   const [editorValue, setEditorValue] = useState("");
   const [editorRect, setEditorRect] = useState(null);
 
-  // Fields
-  const [fields, setFields] = useState(() => [
-    {
-      id: "certTitle",
-      text: "Certificate of Achievement",
-      x: CW / 2,
-      y: 110,
-      fontFamily: "Cinzel",
-      fontSize: 52,
-      fontStyle: "bold",
-      fill: "#1a1a2e",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "subtitle",
-      text: "This certifies that",
-      x: CW / 2,
-      y: 180,
-      fontFamily: "EB Garamond",
-      fontSize: 18,
-      fontStyle: "normal",
-      fill: "#6b7280",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "name",
-      text: "John Doe",
-      x: CW / 2,
-      y: 280,
-      fontFamily: "Playfair Display",
-      fontSize: 48,
-      fontStyle: "bold",
-      fill: "#1a1a2e",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "description",
-      text: "has successfully completed the requirements and is hereby awarded",
-      x: CW / 2,
-      y: 345,
-      fontFamily: "EB Garamond",
-      fontSize: 16,
-      fontStyle: "normal",
-      fill: "#6b7280",
-      align: "center",
-      width: 700,
-    },
-    {
-      id: "award",
-      text: "Outstanding Achievement",
-      x: CW / 2,
-      y: 400,
-      fontFamily: "Playfair Display",
-      fontSize: 24,
-      fontStyle: "bold italic",
-      fill: "#2d3748",
-      align: "center",
-      width: 760,
-    },
-    {
-      id: "date",
-      text: `Date: ${new Date().toISOString().slice(0, 10)}`,
-      x: 115,
-      y: 540,
-      fontFamily: "EB Garamond",
-      fontSize: 14,
-      fontStyle: "normal",
-      fill: "#6b7280",
-      align: "left",
-      width: 260,
-    },
-    {
-      id: "issuer",
-      text: "Issuer Organization",
-      x: 680,
-      y: 540,
-      fontFamily: "EB Garamond",
-      fontSize: 16,
-      fontStyle: "normal",
-      fill: "#1a1a2e",
-      align: "right",
-      width: 300,
-    },
-  ]);
+  // Fields - recalculate positions when canvas size changes
+  const [fields, setFields] = useState([]);
+  
+  useEffect(() => {
+    // Initialize or update field positions based on canvas size
+    setFields([
+      {
+        id: "certTitle",
+        text: "Certificate of Achievement",
+        x: CW / 2,
+        y: CW * 0.13, // 13% from top
+        fontFamily: "Cinzel",
+        fontSize: CW * 0.062, // 6.2% of canvas width
+        fontStyle: "bold",
+        fill: "#1a1a2e",
+        align: "center",
+        width: CW * 0.9,
+      },
+      {
+        id: "subtitle",
+        text: "This certifies that",
+        x: CW / 2,
+        y: CW * 0.214, // 21.4% from top
+        fontFamily: "EB Garamond",
+        fontSize: CW * 0.021, // 2.1% of canvas width
+        fontStyle: "normal",
+        fill: "#6b7280",
+        align: "center",
+        width: CW * 0.9,
+      },
+      {
+        id: "name",
+        text: "John Doe",
+        x: CW / 2,
+        y: CW * 0.333, // 33.3% from top
+        fontFamily: "Playfair Display",
+        fontSize: CW * 0.057, // 5.7% of canvas width
+        fontStyle: "bold",
+        fill: "#1a1a2e",
+        align: "center",
+        width: CW * 0.9,
+      },
+      {
+        id: "description",
+        text: "has successfully completed the requirements and is hereby awarded",
+        x: CW / 2,
+        y: CW * 0.41, // 41% from top
+        fontFamily: "EB Garamond",
+        fontSize: CW * 0.019, // 1.9% of canvas width
+        fontStyle: "normal",
+        fill: "#6b7280",
+        align: "center",
+        width: CW * 0.83,
+      },
+      {
+        id: "award",
+        text: "Outstanding Achievement",
+        x: CW / 2,
+        y: CW * 0.475, // 47.5% from top
+        fontFamily: "Playfair Display",
+        fontSize: CW * 0.028, // 2.8% of canvas width
+        fontStyle: "bold italic",
+        fill: "#2d3748",
+        align: "center",
+        width: CW * 0.9,
+      },
+      {
+        id: "date",
+        text: `Date: ${new Date().toISOString().slice(0, 10)}`,
+        x: CW * 0.137, // 13.7% from left
+        y: CW * 0.64, // 64% from top
+        fontFamily: "EB Garamond",
+        fontSize: CW * 0.017, // 1.7% of canvas width
+        fontStyle: "normal",
+        fill: "#6b7280",
+        align: "left",
+        width: CW * 0.31,
+      },
+      {
+        id: "issuer",
+        text: "Issuer Organization",
+        x: CW * 0.807, // 80.7% from left
+        y: CW * 0.64, // 64% from top
+        fontFamily: "EB Garamond",
+        fontSize: CW * 0.019, // 1.9% of canvas width
+        fontStyle: "normal",
+        fill: "#1a1a2e",
+        align: "right",
+        width: CW * 0.356,
+      },
+    ]);
+  }, [CW, CH]);
 
   function updateField(id, patch) {
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
