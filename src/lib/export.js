@@ -90,18 +90,13 @@ export async function snapshotStagePngBytes({
 }
 
 // ---------------------------------------------------------------------------
-// PDF export — page dimensions are set to the actual PNG pixel size, not the
-// canvas point size. This means 1 PDF point = 1 pixel, so when a printer
-// renders the page at its native size the effective DPI is:
-//   DEFAULT_PIXEL_RATIO × 72  =  4 × 72  =  288 DPI  ✅ print quality
+// PDF export — page dimensions match the canvas size in PDF points (1pt = 1/72 inch).
+// For A4 landscape: 842×595 points = 11.69×8.26 inches at 72 DPI base.
+// The high-resolution PNG (captured at 4× pixel ratio) is embedded and scaled
+// to fit the page, giving 288 DPI effective resolution when printed.
 //
-// PDF viewers display it at the correct physical A4/Letter size because they
-// read the page dimensions and scale to the media size automatically.
-//
-// Memory ceiling at 4×, 100 certs: pdf-lib holds all embedded PNGs in memory
-// until save(). Each PNG ≈ 3–5MB → peak ≈ 300–500MB. This is within Chrome's
-// limits for 100 certs but approaches the ceiling — batching is recommended
-// above ~150 certs. The ZIP export uses batches of 20 for this reason.
+// This ensures the PDF prints at the correct physical size (A4/Letter/Custom)
+// while maintaining high print quality from the 4× resolution capture.
 // ---------------------------------------------------------------------------
 export async function exportPdfFromStage({
   rows,
@@ -122,10 +117,10 @@ export async function exportPdfFromStage({
     const pdfDoc = await PDFDocument.create();
     const total = rows.length;
 
-    // Page dimensions in PDF points = canvas pixels × pixelRatio.
-    // This sets the PDF's intrinsic DPI to pixelRatio × 72.
-    const pageW = cw * DEFAULT_PIXEL_RATIO;
-    const pageH = ch * DEFAULT_PIXEL_RATIO;
+    // Page dimensions in PDF points = canvas dimensions (already in points)
+    // A4 = 842×595 pts = 11.69×8.26 inches
+    const pageW = cw;
+    const pageH = ch;
 
     for (let i = 0; i < total; i++) {
       const r = rows[i];
@@ -133,14 +128,17 @@ export async function exportPdfFromStage({
       if (beforeEachRow) await beforeEachRow(r);
       await new Promise((res) => setTimeout(res, 120));
 
+      // Capture at high resolution (4× pixel ratio for 288 DPI)
       const pngBytes = await snapshotStagePngBytes({
         stageRef, transformerRef, selectedId, setSelectedId,
         editingId, closeEditor,
         pixelRatio: DEFAULT_PIXEL_RATIO,
       });
 
-      // Page size matches the image pixel dimensions exactly — no upscaling.
+      // Create page at correct physical size
       const page = pdfDoc.addPage([pageW, pageH]);
+      
+      // Embed high-res PNG and scale it to fit the page
       const img = await pdfDoc.embedPng(pngBytes);
       page.drawImage(img, { x: 0, y: 0, width: pageW, height: pageH });
 
