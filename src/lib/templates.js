@@ -46,9 +46,9 @@ export function ensureFontLink() {
   document.head.appendChild(link);
 }
 
-// Draw background "cover"
+// Draw background "contain" - fits entire image within the box
 export function coverRect(imgW, imgH, boxW, boxH) {
-  const scale = Math.max(boxW / imgW, boxH / imgH);
+  const scale = Math.min(boxW / imgW, boxH / imgH);
   const w = imgW * scale;
   const h = imgH * scale;
   const x = (boxW - w) / 2;
