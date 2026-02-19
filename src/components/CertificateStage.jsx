@@ -48,18 +48,23 @@ export default function CertificateStage({
     scale = Math.min(scaleX, scaleY, 1); // never scale up beyond 100%
   }
 
+  // Calculate the actual display size
+  const displayWidth = cw * scale;
+  const displayHeight = ch * scale;
+
   return (
     <div className="canvas-stage-outer" ref={stageContainerRef}>
-      <Stage
-        width={cw}
-        height={ch}
-        scale={{ x: scale, y: scale }}
-        ref={stageRef}
-        className="stage-canvas"
-        onMouseDown={(e) => {
-          if (e.target === e.target.getStage()) setSelectedId("");
-        }}
-      >
+      <div style={{ width: displayWidth, height: displayHeight }}>
+        <Stage
+          width={cw}
+          height={ch}
+          scale={{ x: scale, y: scale }}
+          ref={stageRef}
+          className="stage-canvas"
+          onMouseDown={(e) => {
+            if (e.target === e.target.getStage()) setSelectedId("");
+          }}
+        >
         <Layer>
           {/* background */}
           {bg ? (
@@ -134,6 +139,7 @@ export default function CertificateStage({
           />
         </Layer>
       </Stage>
+      </div>
     </div>
   );
 }

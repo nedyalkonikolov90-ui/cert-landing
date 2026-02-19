@@ -777,17 +777,20 @@ button:disabled {
   padding: var(--space-lg);
   min-height: 400px;
   position: relative;
+  overflow: hidden;
 }
 
 .canvas-stage-outer {
   display: flex;
   justify-content: center;
   align-items: center;
+  transform-origin: center center;
 }
 
 .canvas-stage-outer > div {
   box-shadow: var(--shadow-xl);
   border-radius: var(--radius-md);
+  display: block;
 }
 
 .canvas-footer {
