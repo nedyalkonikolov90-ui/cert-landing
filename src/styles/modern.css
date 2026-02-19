@@ -774,25 +774,23 @@ button:disabled {
   justify-content: center;
   align-items: center;
   background: var(--bg-surface);
-  padding: var(--space-2xl);
-  min-height: 500px;
+  padding: var(--space-lg);
+  min-height: 400px;
   position: relative;
-  overflow: auto;
 }
 
 .canvas-stage-outer {
   display: flex;
   justify-content: center;
   align-items: center;
+  width: 100%;
   max-width: 100%;
 }
 
-.stage-canvas {
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-xl);
-  background: white;
-  max-width: 100%;
-  height: auto;
+.canvas-stage-outer canvas {
+  max-width: 100% !important;
+  height: auto !important;
+  display: block;
 }
 
 .canvas-footer {
