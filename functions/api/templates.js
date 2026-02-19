@@ -1,52 +1,188 @@
-// functions/api/templates.js
-export async function onRequestGet({ env, request }) {
-  const origin = new URL(request.url).origin;
+// Template management with CORS support
 
+export async function ensureFontLoaded(fontFamily, weight = 400) {
   try {
-    // Your bucket name binding must exist in Cloudflare Pages/Workers env:
-    // e.g. CERT_TEMPLATES -> bucket "templates"
-    // and files are under prefix "templates/"
-    const prefix = "templates/";
-    const list = await env.CERT_TEMPLATES.list({ prefix });
-
-    const templates = (list.objects || [])
-      .filter((o) => o.key && !o.key.endsWith("/"))
-      .filter((o) => /\.(png|jpg|jpeg|svg)$/i.test(o.key))
-      .map((o) => {
-        const file = o.key.split("/").pop();
-        const label = file.replace(/\.(png|jpg|jpeg|svg)$/i, "");
-        // Route through same-origin proxy so crossOrigin="anonymous" works
-        // and the canvas is never tainted during export.
-        const proxyUrl = `${origin}/api/template?key=${encodeURIComponent(o.key)}`;
-        return {
-          key: o.key,
-          label,
-          url: proxyUrl,
-          thumbUrl: proxyUrl,
-        };
-      });
-
-    return new Response(JSON.stringify({ templates }), {
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-store",
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: e?.message || "Failed to list templates" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    if (!document.fonts?.load) return;
+    await document.fonts.load(`${weight} 16px "${fontFamily}"`);
+    await document.fonts.ready;
+  } catch {
+    // ignore (some browsers)
   }
 }
 
-export async function onRequestOptions() {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-    },
+export function ensureFontLink() {
+  const id = "certifyly-fonts";
+  if (document.getElementById(id)) return;
+
+  const link = document.createElement("link");
+  link.id = id;
+  link.rel = "stylesheet";
+  link.href =
+    "https://fonts.googleapis.com/css2?" +
+    [
+      "family=Inter:wght@400;600;700;800",
+      "family=Playfair+Display:wght@400;600;700",
+      "family=Montserrat:wght@400;600;700",
+      "family=Poppins:wght@400;600;700",
+      "family=Oswald:wght@400;600;700",
+      "family=Cormorant+Garamond:wght@400;600;700",
+      "family=Libre+Baskerville:wght@400;700",
+      "family=Crimson+Pro:wght@400;600;700",
+      "family=EB+Garamond:wght@400;600;700",
+      "family=Merriweather:wght@400;700",
+      "family=Cinzel:wght@400;600;700",
+      "family=Playfair+Display+SC",
+      "family=Libre+Caslon+Display",
+      "family=Prata",
+      "family=Bodoni+Moda:wght@400;600;700",
+      "family=DM+Serif+Display",
+      "family=Source+Serif+4:wght@400;600;700",
+      "family=Lora:wght@400;600;700",
+      "family=Spectral:wght@400;600;700",
+      "family=Alegreya:wght@400;600;700",
+    ].join("&") +
+    "&display=swap";
+
+  document.head.appendChild(link);
+}
+
+// Draw background "cover"
+export function coverRect(imgW, imgH, boxW, boxH) {
+  const scale = Math.max(boxW / imgW, boxH / imgH);
+  const w = imgW * scale;
+  const h = imgH * scale;
+  const x = (boxW - w) / 2;
+  const y = (boxH - h) / 2;
+  return { x, y, w, h };
+}
+
+// ✅ FIXED: matches original shape — returns data.templates
+export async function fetchTemplates() {
+  const res = await fetch("/api/templates");
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return data.templates || [];
+}
+
+// ✅ Load image with CORS for export.
+// IMPORTANT: Never fall back to a non-CORS load. If an image loads without
+// crossOrigin="anonymous", the browser permanently marks the canvas as
+// "tainted" and toDataURL() throws — producing 0 bytes and a "not a PNG"
+// error on export. We must either succeed with CORS or throw.
+export function loadImageWithCORS(url) {
+  return new Promise((resolve, reject) => {
+    if (!url) {
+      reject(new Error("No URL provided"));
+      return;
+    }
+
+    const img = new Image();
+    
+    // Data URLs (uploaded templates) don't need CORS
+    const isDataUrl = url.startsWith("data:");
+    if (!isDataUrl) {
+      img.crossOrigin = "anonymous";
+    }
+
+    img.onload = () => {
+      resolve(img);
+    };
+
+    img.onerror = () => {
+      reject(
+        new Error(
+          `Failed to load template image${isDataUrl ? "" : " with CORS"}. ` +
+          (isDataUrl 
+            ? "The image data may be corrupted."
+            : `Make sure the server at "${new URL(url).origin}" returns an "Access-Control-Allow-Origin: *" header.`)
+        )
+      );
+    };
+
+    // Cache-bust only for HTTP URLs, not data URLs
+    if (isDataUrl) {
+      img.src = url;
+    } else {
+      const sep = url.includes("?") ? "&" : "?";
+      img.src = url + sep + "_cb=" + Date.now();
+    }
   });
+}
+
+
+// ------------------------------
+// Custom user templates (local)
+// ------------------------------
+const CUSTOM_TEMPLATES_KEY = "certifyly_custom_templates_v1";
+
+export function loadCustomTemplates() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_TEMPLATES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomTemplates(templates) {
+  try {
+    localStorage.setItem(CUSTOM_TEMPLATES_KEY, JSON.stringify(templates || []));
+  } catch {
+    // If storage quota exceeded, ignore (UI should show error elsewhere)
+  }
+}
+
+function sanitizeLabel(name) {
+  const base = (name || "Custom template").trim();
+  // strip extension
+  return base.replace(/\.[a-z0-9]+$/i, "") || "Custom template";
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Creates a template object from an uploaded image (PNG/JPG/SVG/WebP).
+ * Stored as a data URL so it works offline and exports safely.
+ */
+export async function createCustomTemplateFromFile(file) {
+  if (!file) throw new Error("No file selected");
+
+  const okTypes = [
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/svg+xml",
+  ];
+
+  if (file.type && !okTypes.includes(file.type)) {
+    throw new Error("Please upload a PNG, JPG, WebP, or SVG image.");
+  }
+
+  // Basic size guard (localStorage is limited; ~5MB typical)
+  const maxBytes = 2.5 * 1024 * 1024; // keep conservative
+  if (file.size > maxBytes) {
+    throw new Error("That file is too large. Please use an image under 2.5 MB.");
+  }
+
+  const dataUrl = await fileToDataUrl(file);
+  const key = `custom-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  return {
+    key,
+    label: sanitizeLabel(file.name),
+    url: dataUrl,
+    thumbUrl: dataUrl,
+    isCustom: true,
+    createdAt: new Date().toISOString(),
+  };
 }
