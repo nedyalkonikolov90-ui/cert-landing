@@ -44,6 +44,7 @@ export default function CanvasPreview({
           stageRef={stageRef}
           transformerRef={transformerRef}
           openEditorFor={openEditorFor}
+          paper={paper}
         />
 
         <TextEditorOverlay

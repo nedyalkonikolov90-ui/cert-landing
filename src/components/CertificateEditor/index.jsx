@@ -15,7 +15,8 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
 
   // Paper & Template
   const [paper, setPaper] = useState("A4");
-  const { w: CW, h: CH } = SIZES[paper];
+  const [customSize, setCustomSize] = useState({ w: 842, h: 595 });
+  const { w: CW, h: CH } = paper === "CUSTOM" ? customSize : SIZES[paper];
   const [templateKey, setTemplateKey] = useState("");
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.key === templateKey) || null,
@@ -46,7 +47,14 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
 
     loadImageWithCORS(selectedTemplate.url)
       .then((img) => {
-        if (!cancelled) setBg(img);
+        if (!cancelled) {
+          setBg(img);
+          
+          // If paper is set to CUSTOM, update canvas size to match image
+          if (paper === "CUSTOM") {
+            setCustomSize({ w: img.width, h: img.height });
+          }
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -66,7 +74,7 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
     return () => {
       cancelled = true;
     };
-  }, [selectedTemplate]);
+  }, [selectedTemplate, paper]);
 
   // Input mode
   const [inputMode, setInputMode] = useState("manual");

@@ -41,8 +41,15 @@ export default function ControlPanel({
             value={paper}
             onChange={(e) => setPaper(e.target.value)}
           >
-            <option value="A4">A4 (210 × 297 mm)</option>
+            <option value="A4">A4 (842 × 595 px)</option>
+            <option value="LETTER">Letter (792 × 612 px)</option>
+            <option value="CUSTOM">Custom (match template size)</option>
           </select>
+          {paper === "CUSTOM" && (
+            <p className="form-hint">
+              Canvas size will automatically match your uploaded template dimensions
+            </p>
+          )}
         </div>
 
         <div className="form-group">

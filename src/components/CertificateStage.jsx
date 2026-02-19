@@ -14,6 +14,7 @@ export default function CertificateStage({
   transformerRef,
   stageContainerRef,
   openEditorFor,
+  paper,
 }) {
   // Attach transformer to selected node
   useEffect(() => {
@@ -49,11 +50,16 @@ export default function CertificateStage({
           {/* background */}
           {bg ? (
             (() => {
+              // For CUSTOM paper size, fill canvas exactly
+              if (paper === "CUSTOM") {
+                return <KImage image={bg} x={0} y={0} width={cw} height={ch} listening={false} />;
+              }
+              // For standard sizes, use contain scaling
               const r = coverRect(bg.width, bg.height, cw, ch);
               return <KImage image={bg} x={r.x} y={r.y} width={r.w} height={r.h} listening={false} />;
             })()
           ) : (
-            <KText text="Loading template…" x={20} y={20} fontFamily="Inter" fontSize={16} fill="#e5edfd" />
+            <KText text="Loading template…" x={20} y={20} fontFamily="Inter" fontSize={16} fill="#6b7280" />
           )}
 
           {/* text fields */}

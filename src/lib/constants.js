@@ -1,6 +1,7 @@
 export const SIZES = {
   A4: { w: 842, h: 595 },     // landscape
   LETTER: { w: 792, h: 612 }, // landscape
+  CUSTOM: { w: 842, h: 595 }, // placeholder, will be updated dynamically
 };
 
 export const MAX_PREVIEW = 5;
