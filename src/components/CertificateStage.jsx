@@ -36,9 +36,9 @@ export default function CertificateStage({
   return (
     <div className="canvas-stage-outer" ref={stageContainerRef}>
       <Stage
-        width={cw}
-        height={ch}
-        scale={{ x: 0.7, y: 0.7 }}
+        width={cw * 0.8}
+        height={ch * 0.8}
+        scale={{ x: 0.8, y: 0.8 }}
         ref={stageRef}
         className="stage-canvas"
         onMouseDown={(e) => {

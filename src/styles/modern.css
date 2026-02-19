@@ -785,6 +785,11 @@ button:disabled {
   align-items: center;
 }
 
+.canvas-stage-outer > div {
+  box-shadow: var(--shadow-xl);
+  border-radius: var(--radius-md);
+}
+
 .canvas-footer {
   padding: var(--space-md) var(--space-lg);
   background: var(--bg-surface);
