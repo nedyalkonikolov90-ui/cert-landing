@@ -783,14 +783,6 @@ button:disabled {
   display: flex;
   justify-content: center;
   align-items: center;
-  width: 100%;
-  max-width: 100%;
-}
-
-.canvas-stage-outer canvas {
-  max-width: 100% !important;
-  height: auto !important;
-  display: block;
 }
 
 .canvas-footer {

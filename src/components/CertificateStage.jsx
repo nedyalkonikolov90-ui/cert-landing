@@ -38,6 +38,7 @@ export default function CertificateStage({
       <Stage
         width={cw}
         height={ch}
+        scale={{ x: 0.7, y: 0.7 }}
         ref={stageRef}
         className="stage-canvas"
         onMouseDown={(e) => {
