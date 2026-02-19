@@ -77,7 +77,12 @@ export function loadImageWithCORS(url) {
     }
 
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    
+    // Data URLs (uploaded templates) don't need CORS
+    const isDataUrl = url.startsWith("data:");
+    if (!isDataUrl) {
+      img.crossOrigin = "anonymous";
+    }
 
     img.onload = () => {
       resolve(img);
@@ -86,18 +91,21 @@ export function loadImageWithCORS(url) {
     img.onerror = () => {
       reject(
         new Error(
-          `Failed to load template image with CORS. ` +
-          `Make sure the server at "${new URL(url).origin}" ` +
-          `returns an "Access-Control-Allow-Origin: *" header.`
+          `Failed to load template image${isDataUrl ? "" : " with CORS"}. ` +
+          (isDataUrl 
+            ? "The image data may be corrupted."
+            : `Make sure the server at "${new URL(url).origin}" returns an "Access-Control-Allow-Origin: *" header.`)
         )
       );
     };
 
-    // Cache-bust so the browser doesn't reuse a non-CORS cached response.
-    // Browsers may have cached the image without the CORS flag, which would
-    // cause crossOrigin="anonymous" to fail even if the server now sends the header.
-    const sep = url.includes("?") ? "&" : "?";
-    img.src = url + sep + "_cb=" + Date.now();
+    // Cache-bust only for HTTP URLs, not data URLs
+    if (isDataUrl) {
+      img.src = url;
+    } else {
+      const sep = url.includes("?") ? "&" : "?";
+      img.src = url + sep + "_cb=" + Date.now();
+    }
   });
 }
 
