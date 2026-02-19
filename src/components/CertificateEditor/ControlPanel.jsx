@@ -31,6 +31,119 @@ export default function ControlPanel({
 
   return (
     <div className="control-panel">
+      {/* RECIPIENTS SECTION - NOW FIRST */}
+      <div className="panel-section">
+        <h3 className="section-title">Recipients</h3>
+
+        <div className="mode-tabs">
+          <button
+            className={`mode-tab ${inputMode === "manual" ? "active" : ""}`}
+            onClick={() => setInputMode("manual")}
+            type="button"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M2 4h12M2 8h12M2 12h12"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+            Manual Entry
+          </button>
+          <button
+            className={`mode-tab ${inputMode === "upload" ? "active" : ""}`}
+            onClick={() => setInputMode("upload")}
+            type="button"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 10V2M8 2L5 5M8 2l3 3"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M2 14h12"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+            Upload File
+          </button>
+        </div>
+
+        {inputMode === "manual" ? (
+          <ManualInputTable manualRows={manualRows} setManualRows={setManualRows} />
+        ) : (
+          <div className="upload-section">
+            <input
+              ref={dataInputRef}
+              type="file"
+              accept=".csv,.txt"
+              onChange={(e) => handleFileUpload(e.target.files?.[0])}
+              style={{ display: "none" }}
+            />
+            <button
+              className="upload-button"
+              onClick={() => dataInputRef.current?.click()}
+              type="button"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M12 15V3M12 3L8 7M12 3l4 4"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
+              {uploadFile ? "Change File" : "Choose CSV or TXT"}
+            </button>
+
+            {uploadFile && (
+              <div className="file-info">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M8 14A6 6 0 108 2a6 6 0 000 12z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M8 5v3M8 11h.01"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <span>{uploadFile.name}</span>
+              </div>
+            )}
+
+            {error && (
+              <div className="error-message">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5"/>
+                  <path d="M8 5v3M8 11h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+                {error}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="panel-divider"></div>
+
+      {/* CONFIGURATION SECTION - NOW SECOND */}
       <div className="panel-section">
         <h3 className="section-title">Configuration</h3>
 
@@ -118,111 +231,6 @@ export default function ControlPanel({
             Click a thumbnail to select a template.
           </div>
         </div>
-      </div>
-
-      <div className="panel-divider"></div>
-
-      <div className="panel-section">
-        <h3 className="section-title">Recipients</h3>
-
-        <div className="mode-tabs">
-          <button
-            className={`mode-tab ${inputMode === "manual" ? "active" : ""}`}
-            onClick={() => setInputMode("manual")}
-            type="button"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M2 4h12M2 8h12M2 12h12"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-            Manual Entry
-          </button>
-          <button
-            className={`mode-tab ${inputMode === "upload" ? "active" : ""}`}
-            onClick={() => setInputMode("upload")}
-            type="button"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M8 10V2M8 2L5 5M8 2l3 3"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M2 14h12"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-            Upload File
-          </button>
-        </div>
-
-        {inputMode === "manual" ? (
-          <ManualInputTable manualRows={manualRows} setManualRows={setManualRows} />
-        ) : (
-          <div className="upload-section">
-            <input
-              ref={dataInputRef}
-              type="file"
-              accept=".csv,.txt"
-              onChange={(e) => handleFileUpload(e.target.files?.[0])}
-              style={{ display: "none" }}
-            />
-            <button
-              className="upload-button"
-              onClick={() => dataInputRef.current?.click()}
-              type="button"
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M12 15V3M12 3L8 7M12 3l4 4"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-              {uploadFile ? "Change File" : "Choose CSV or TXT"}
-            </button>
-
-            {uploadFile && (
-              <div className="file-info">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path
-                    d="M8 14A6 6 0 108 2a6 6 0 000 12z"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  />
-                  <path
-                    d="M8 11.5V8M8 5v.5"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  />
-                </svg>
-                <span>{uploadFile.name}</span>
-              </div>
-            )}
-
-            <p className="upload-hint">
-              CSV or TXT with columns: Name, Award, Date (optional), Issuer (optional)
-            </p>
-          </div>
-        )}
       </div>
 
       <div className="panel-divider"></div>

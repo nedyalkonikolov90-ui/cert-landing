@@ -34,12 +34,26 @@ export default function CertificateStage({
     tr.getLayer()?.batchDraw();
   }, [selectedId, fields, stageRef, transformerRef]);
 
+  // Calculate dynamic scale to fit canvas in container
+  // Max container width is roughly 800px for the middle column
+  const maxContainerWidth = 800;
+  const maxContainerHeight = 600;
+  
+  let scale = 0.8; // default for A4/Letter
+  
+  if (paper === "CUSTOM") {
+    // For custom sizes, calculate scale to fit within container
+    const scaleX = maxContainerWidth / cw;
+    const scaleY = maxContainerHeight / ch;
+    scale = Math.min(scaleX, scaleY, 1); // never scale up beyond 100%
+  }
+
   return (
     <div className="canvas-stage-outer" ref={stageContainerRef}>
       <Stage
-        width={cw * 0.8}
-        height={ch * 0.8}
-        scale={{ x: 0.8, y: 0.8 }}
+        width={cw}
+        height={ch}
+        scale={{ x: scale, y: scale }}
         ref={stageRef}
         className="stage-canvas"
         onMouseDown={(e) => {
