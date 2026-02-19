@@ -34,12 +34,12 @@ export default function CertificateStage({
   }, [selectedId, fields, stageRef, transformerRef]);
 
   return (
-    <div style={styles.canvasStageOuter} ref={stageContainerRef}>
+    <div className="canvas-stage-outer" ref={stageContainerRef}>
       <Stage
         width={cw}
         height={ch}
         ref={stageRef}
-        style={styles.stage}
+        className="stage-canvas"
         onMouseDown={(e) => {
           if (e.target === e.target.getStage()) setSelectedId("");
         }}
@@ -116,21 +116,3 @@ export default function CertificateStage({
     </div>
   );
 }
-
-const styles = {
-  canvasStageOuter: {
-    width: "100%",
-    display: "flex",
-    justifyContent: "center",
-    position: "relative",
-  },
-  stage: {
-    borderRadius: 16,
-    background: "#0a0a0f",
-    border: "1px solid rgba(255,255,255,0.08)",
-    boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
-    width: "100%",
-    maxWidth: 1100,
-    height: "auto",
-  },
-};
