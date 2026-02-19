@@ -22,6 +22,13 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
     [templates, templateKey]
   );
 
+  // Auto-select first template when templates load
+  useEffect(() => {
+    if (!templateKey && templates.length > 0) {
+      setTemplateKey(templates[0].key);
+    }
+  }, [templates, templateKey]);
+
   // Background image with CORS support
   const [bg, setBg] = useState(null);
   const [bgLoading, setBgLoading] = useState(false);
@@ -71,8 +78,8 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
 
   // Global texts
   const [certTitle, setCertTitle] = useState("Certificate of Achievement");
-  const [subtitle, setSubtitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [subtitle, setSubtitle] = useState("This certifies that");
+  const [description, setDescription] = useState("has successfully completed the requirements and is hereby awarded");
   const [dateText, setDateText] = useState(new Date().toISOString().slice(0, 10));
   const [issuerText, setIssuerText] = useState("Issuer Organization");
 
@@ -94,8 +101,8 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
       text: "Certificate of Achievement",
       x: CW / 2,
       y: 110,
-      fontFamily: "Playfair Display",
-      fontSize: 48,
+      fontFamily: "Cinzel",
+      fontSize: 52,
       fontStyle: "bold",
       fill: "#1a1a2e",
       align: "center",
@@ -103,13 +110,13 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
     },
     {
       id: "subtitle",
-      text: "",
+      text: "This certifies that",
       x: CW / 2,
-      y: 170,
-      fontFamily: "Inter",
-      fontSize: 16,
+      y: 180,
+      fontFamily: "EB Garamond",
+      fontSize: 18,
       fontStyle: "normal",
-      fill: "#4a5568",
+      fill: "#6b7280",
       align: "center",
       width: 760,
     },
@@ -119,7 +126,7 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
       x: CW / 2,
       y: 280,
       fontFamily: "Playfair Display",
-      fontSize: 42,
+      fontSize: 48,
       fontStyle: "bold",
       fill: "#1a1a2e",
       align: "center",
@@ -127,24 +134,24 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
     },
     {
       id: "description",
-      text: "",
+      text: "has successfully completed the requirements and is hereby awarded",
       x: CW / 2,
-      y: 335,
-      fontFamily: "Inter",
-      fontSize: 15,
+      y: 345,
+      fontFamily: "EB Garamond",
+      fontSize: 16,
       fontStyle: "normal",
-      fill: "#4a5568",
+      fill: "#6b7280",
       align: "center",
-      width: 760,
+      width: 700,
     },
     {
       id: "award",
       text: "Outstanding Achievement",
       x: CW / 2,
-      y: 390,
-      fontFamily: "Inter",
-      fontSize: 20,
-      fontStyle: "normal",
+      y: 400,
+      fontFamily: "Playfair Display",
+      fontSize: 24,
+      fontStyle: "bold italic",
       fill: "#2d3748",
       align: "center",
       width: 760,
@@ -153,11 +160,11 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
       id: "date",
       text: `Date: ${new Date().toISOString().slice(0, 10)}`,
       x: 115,
-      y: 560,
-      fontFamily: "Inter",
+      y: 540,
+      fontFamily: "EB Garamond",
       fontSize: 14,
       fontStyle: "normal",
-      fill: "#4a5568",
+      fill: "#6b7280",
       align: "left",
       width: 260,
     },
@@ -165,10 +172,10 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
       id: "issuer",
       text: "Issuer Organization",
       x: 680,
-      y: 550,
-      fontFamily: "Inter",
+      y: 540,
+      fontFamily: "EB Garamond",
       fontSize: 16,
-      fontStyle: "bold",
+      fontStyle: "normal",
       fill: "#1a1a2e",
       align: "right",
       width: 300,
