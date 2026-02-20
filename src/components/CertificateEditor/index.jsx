@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import Inspector from "./Inspector";
+import ExportPanel from "./ExportPanel";
 import StepWizard from "./StepWizard";
 import Step1Template from "./Step1Template";
 import Step2Customize from "./Step2Customize";
