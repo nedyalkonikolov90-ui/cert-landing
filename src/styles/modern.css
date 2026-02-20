@@ -181,11 +181,6 @@ body {
 .header-link:hover {
   color: var(--primary);
 }
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-lg);
-}
 
 .logo-section {
   display: flex;
