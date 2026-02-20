@@ -51,43 +51,12 @@ function CertifylyApp() {
 
   return (
     <div className="app-container">
-      <div className="app-header">
-        <div className="header-content">
-          <div className="logo-section">
-            <div className="logo-icon">
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <rect
-                  x="4"
-                  y="4"
-                  width="24"
-                  height="24"
-                  rx="4"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                />
-                <path
-                  d="M10 16L14 20L22 12"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
-            <div className="logo-text">
-              <h1>Certifyly</h1>
-              <p>Professional Certificate Generator</p>
-            </div>
-          </div>
+      {/*
+        The editor has its own fixed top bar (wizard) that contains the brand
+        and “Back to BudgetWonders”. Keep this page full-bleed.
+      */}
 
-          {/* Optional “Back to Home” link */}
-          <a className="header-link" href="/">
-            ← BudgetWonders
-          </a>
-        </div>
-      </div>
-
-      <main className="app-main">
+      <main className="app-main app-main-full">
         {templatesLoading ? (
           <div className="loading-state">
             <div className="spinner"></div>
