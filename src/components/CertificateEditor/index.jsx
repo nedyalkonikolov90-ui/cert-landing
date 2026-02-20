@@ -463,6 +463,12 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
   // ============================================================================
   return (
     <div className="editor-container">
+      <StepWizard
+        currentStep={currentStep}
+        setCurrentStep={setCurrentStep}
+        completedSteps={completedSteps}
+        variant="top"
+      />
       {/* App Header with Step Wizard */}
       <div className="app-header">
         <div className="header-content">
@@ -479,14 +485,8 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
             </div>
           </div>
 
-          <StepWizard
-            currentStep={currentStep}
-            setCurrentStep={setCurrentStep}
-            completedSteps={completedSteps}
-          />
-
-          <a className="header-link" href="/">
-            ← Back to Home
+          <a className="header-link" href="https://budgetwonders.eu">
+            ← Back to BudgetWonders
           </a>
         </div>
       </div>

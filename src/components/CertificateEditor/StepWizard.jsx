@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function StepWizard({ currentStep, setCurrentStep, completedSteps }) {
+export default function StepWizard({ currentStep, setCurrentStep, completedSteps, variant = "default" }) {
   const steps = [
     { id: 1, title: "Choose Template", desc: "Select your certificate design" },
     { id: 2, title: "Customize Style", desc: "Adjust fonts, colors & layout" },
@@ -8,7 +8,7 @@ export default function StepWizard({ currentStep, setCurrentStep, completedSteps
   ];
 
   return (
-    <div className="step-wizard">
+    <div className={`step-wizard ${variant === "top" ? "step-wizard-fixed" : ""}`}>
       <div className="step-wizard-inner">
         {steps.map((step, index) => (
           <React.Fragment key={step.id}>

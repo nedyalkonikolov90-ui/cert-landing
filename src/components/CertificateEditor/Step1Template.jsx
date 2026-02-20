@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 
 export default function Step1Template({
   paper,
@@ -10,6 +10,37 @@ export default function Step1Template({
   onNext,
 }) {
   const templateInputRef = useRef(null);
+  const [search, setSearch] = useState("");
+  const [tag, setTag] = useState("All");
+
+  const inferTags = (t) => {
+    const label = String(t?.label || "").toLowerCase();
+    const tags = new Set();
+    if (t?.isCustom) tags.add("Custom");
+    if (/(kid|child|children|дет|ученик)/.test(label)) tags.add("Kids");
+    if (/(football|soccer|футбол)/.test(label)) tags.add("Football");
+    if (/(ballet|dance|балет|танц)/.test(label)) tags.add("Ballet");
+    if (/(classic|royal|gold|seal|traditional)/.test(label)) tags.add("Classic");
+    if (/(modern|minimal|clean)/.test(label)) tags.add("Modern");
+    return Array.from(tags);
+  };
+
+  const availableTags = useMemo(() => {
+    const set = new Set(["All"]);
+    (templates || []).forEach((t) => inferTags(t).forEach((x) => set.add(x)));
+    return Array.from(set);
+  }, [templates]);
+
+  const filteredTemplates = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (templates || []).filter((t) => {
+      const label = String(t?.label || "").toLowerCase();
+      const matchesQ = !q || label.includes(q) || String(t?.key || "").toLowerCase().includes(q);
+      const tags = inferTags(t);
+      const matchesTag = tag === "All" || tags.includes(tag);
+      return matchesQ && matchesTag;
+    });
+  }, [templates, search, tag]);
 
   const handleContinue = () => {
     if (templateKey) {
@@ -17,6 +48,28 @@ export default function Step1Template({
     }
   };
 
+  const handleTemplateFile = async (file) => {
+    if (!file) return;
+    try {
+      const custom = await onAddCustomTemplate(file);
+      if (custom?.key) setTemplateKey(custom.key);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      alert(e?.message || "Failed to add template.");
+    }
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer?.files?.[0];
+    handleTemplateFile(file);
+  };
+
+  const onDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
   return (
     <div className="step-panel">
       <div className="step-header">
@@ -55,8 +108,10 @@ export default function Step1Template({
 
           <button
             type="button"
-            className="btn-upload-template"
+            className="btn-secondary btn-upload-template"
             onClick={() => templateInputRef.current?.click()}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
           >
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
               <path
@@ -66,7 +121,7 @@ export default function Step1Template({
                 strokeLinecap="round"
               />
             </svg>
-            Upload Custom Template
+            Upload or Drop Template
           </button>
 
           <input
@@ -92,7 +147,31 @@ export default function Step1Template({
             }}
           />
 
-          <div className="template-grid-step1">
+                  <div className="template-toolbar">
+          <div className="template-search">
+            <input
+              className="bw-input"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search templates…"
+              aria-label="Search templates"
+            />
+          </div>
+          <div className="template-tags" role="tablist" aria-label="Template tags">
+            {availableTags.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={`tag-chip ${tag === t ? "active" : ""}`}
+                onClick={() => setTag(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+
+<div className="template-grid-step1">
             {templates.length === 0 ? (
               <div className="empty-templates">
                 <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
@@ -112,7 +191,7 @@ export default function Step1Template({
                 <span>Upload a custom template to get started</span>
               </div>
             ) : (
-              templates.map((t) => {
+              filteredTemplates.map((t) => {
                 const imgSrc = t.thumbUrl || t.thumbnailUrl || t.previewUrl || t.url;
                 const active = templateKey === t.key;
 

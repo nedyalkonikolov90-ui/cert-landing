@@ -81,6 +81,8 @@
   --container-lg: 1024px;
   --container-xl: 1280px;
   --container-2xl: 1536px;
+
+  --wizard-fixed-height: 64px;
 }
 
 /* ============================================================================
@@ -729,6 +731,18 @@ body {
 
 .btn-danger:hover:not(:disabled) {
   background: #dc2626;
+}
+
+
+/* Upload template button - match button system but full-width */
+.btn-upload-template {
+  width: 100%;
+  justify-content: flex-start;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.btn-upload-template svg {
+  flex-shrink: 0;
 }
 
 button:disabled {
@@ -1745,6 +1759,39 @@ button:disabled {
   margin-bottom: var(--space-xl);
 }
 
+.step-wizard-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  padding: var(--space-md) var(--space-lg);
+  margin-bottom: 0;
+  backdrop-filter: blur(8px);
+}
+
+.step-wizard-fixed .step-wizard-inner {
+  max-width: 1100px;
+}
+
+.step-wizard-fixed .step-desc {
+  display: none;
+}
+
+.step-wizard-fixed .step-item {
+  padding: var(--space-sm) var(--space-md);
+}
+
+.step-wizard-fixed .step-number {
+  width: 28px;
+  height: 28px;
+  font-size: var(--text-xs);
+}
+
+.step-wizard-fixed .step-connector {
+  width: 24px;
+}
+
 .step-wizard-inner {
   display: flex;
   align-items: center;
@@ -2021,6 +2068,44 @@ button:disabled {
 .upload-subtitle {
   font-size: var(--text-sm);
   color: var(--text-muted);
+}
+
+/* Template toolbar (search + tags) */
+.template-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.template-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.tag-chip {
+  padding: var(--space-xs) var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+}
+
+.tag-chip:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tag-chip.active {
+  background: rgba(67, 83, 255, 0.10);
+  border-color: rgba(67, 83, 255, 0.35);
+  color: var(--text-primary);
 }
 
 .template-grid-step1 {
@@ -2317,6 +2402,7 @@ button:disabled {
 .editor-container {
   min-height: 100vh;
   background: var(--bg-page);
+  padding-top: var(--wizard-fixed-height);
 }
 
 .editor-layout-stepped {
@@ -2401,7 +2487,6 @@ button:disabled {
   justify-content: space-between;
   gap: var(--space-lg);
 }
-
 .step-title-compact {
   display: flex;
   align-items: center;
@@ -2632,6 +2717,31 @@ button:disabled {
 .header-content .step-wizard-inner {
   max-width: 600px;
 }
+
+/* Header: make the step wizard compact so it fits nicely between the logo and the back link */
+.header-content .step-wizard-inner {
+  gap: var(--space-xs);
+}
+
+.header-content .step-item {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+}
+
+.header-content .step-number {
+  width: 28px;
+  height: 28px;
+  font-size: var(--text-xs);
+}
+
+.header-content .step-desc {
+  display: none;
+}
+
+.header-content .step-connector {
+  width: 24px;
+}
+
 
 /* ============================================================================
    RIGHT PANEL STYLES

@@ -14,6 +14,18 @@ export default function Step3Recipients({
 }) {
   const dataInputRef = useRef(null);
 
+  const onDropData = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleFileUpload(file);
+  };
+
+  const onDragOverData = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   return (
     <div className="step-panel">
       <div className="step-header">
@@ -74,7 +86,7 @@ export default function Step3Recipients({
               />
 
               {!uploadFile ? (
-                <button className="upload-zone" onClick={() => dataInputRef.current?.click()}>
+                <button className="upload-zone" onClick={() => dataInputRef.current?.click()} onDrop={onDropData} onDragOver={onDragOverData}>
                   <div className="upload-icon-large">
                     <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
                       <path d="M24 30V12M24 12L18 18M24 12l6 6" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
