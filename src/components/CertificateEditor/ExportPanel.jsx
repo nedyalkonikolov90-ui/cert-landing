@@ -1,19 +1,14 @@
 import React from "react";
 
 export default function ExportPanel({
-  inputMode,
-  manualRows,
-  rows,
-  busy,
+  recipients,
+  onExportPdf,
+  onExportZip,
+  exportLoading,
   progress,
-  handleExportPdf,
-  handleExportZip,
 }) {
-  const validCount = inputMode === "manual"
-    ? manualRows.filter(r => r.name?.trim() && r.award?.trim()).length
-    : rows.length;
-
-  const showProgress = busy && progress.total > 0;
+  const validCount = recipients?.length || 0;
+  const showProgress = exportLoading && progress.total > 0;
   const pct = showProgress ? Math.round((progress.done / progress.total) * 100) : 0;
 
   return (
@@ -62,10 +57,10 @@ export default function ExportPanel({
       <div className="export-buttons">
         <button
           className="btn-primary"
-          onClick={handleExportPdf}
-          disabled={busy || validCount === 0}
+          onClick={onExportPdf}
+          disabled={exportLoading || validCount === 0}
         >
-          {busy ? (
+          {exportLoading ? (
             <>
               <div className="spinner-small"></div>
               {showProgress ? `${pct}%` : "Generating…"}
@@ -82,10 +77,10 @@ export default function ExportPanel({
 
         <button
           className="btn-secondary"
-          onClick={handleExportZip}
-          disabled={busy || validCount === 0}
+          onClick={onExportZip}
+          disabled={exportLoading || validCount === 0}
         >
-          {busy ? (
+          {exportLoading ? (
             <>
               <div className="spinner-small"></div>
               {showProgress ? `${pct}%` : "Generating…"}
