@@ -107,7 +107,10 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: var(--text-base);
+  margin: 0;
+  padding: 0;
 }
+
 
 /* ============================================================================
    APP STRUCTURE
@@ -1771,9 +1774,125 @@ button:disabled {
 }
 
 .step-wizard-fixed .step-wizard-inner {
-  max-width: 1100px;
+  max-width: none;
+  width: 100%;
 }
 
+/* Top bar layout (fixed wizard variant) */
+.step-wizard-inner-topbar {
+  justify-content: space-between;
+  gap: var(--space-lg);
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 220px;
+}
+
+.topbar-right {
+  justify-content: flex-end;
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  text-decoration: none;
+  color: var(--text-primary);
+}
+
+.topbar-brand:hover {
+  color: var(--primary);
+}
+
+.topbar-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+}
+
+.topbar-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.topbar-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: var(--text-base);
+  font-weight: 700;
+}
+
+.topbar-subtitle {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.topbar-back {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+}
+
+.topbar-back:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.step-wizard-steps-top {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+/* Keep the steps compact in the top bar */
+.step-wizard-fixed .step-wizard-steps-top .step-item {
+  flex: 0 1 260px;
+}
+
+@media (max-width: 1100px) {
+  .topbar-left,
+  .topbar-right {
+    min-width: auto;
+  }
+
+  .topbar-subtitle {
+    display: none;
+  }
+
+  .step-wizard-fixed .step-wizard-steps-top .step-item {
+    flex-basis: 220px;
+  }
+}
+
+@media (max-width: 860px) {
+  .topbar-text {
+    display: none;
+  }
+
+  .topbar-back {
+    white-space: nowrap;
+  }
+
+  .step-wizard-fixed .step-wizard-steps-top .step-item {
+    flex-basis: 180px;
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  .step-wizard-fixed .step-connector {
+    display: none;
+  }
+}
 .step-wizard-fixed .step-desc {
   display: none;
 }
@@ -2410,7 +2529,7 @@ button:disabled {
   grid-template-columns: 400px 1fr 400px;
   gap: 0;
   width: 100%;
-  height: calc(100vh - 80px);
+  height: calc(100vh - var(--wizard-fixed-height));
 }
 
 .step-sidebar {
@@ -2704,7 +2823,7 @@ button:disabled {
 
 /* Update layout height */
 .editor-layout-stepped {
-  height: calc(100vh - 80px);
+  height: calc(100vh - var(--wizard-fixed-height));
 }
 
 .header-content .step-wizard {
@@ -2758,4 +2877,9 @@ button:disabled {
   font-size: var(--text-sm);
   color: var(--text-muted);
   margin: 0 0 var(--space-lg) 0;
+}
+/* Override centering constraints for the fixed top bar */
+.step-wizard-fixed .step-wizard-inner-topbar {
+  max-width: none;
+  margin: 0;
 }
