@@ -463,12 +463,33 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
   // ============================================================================
   return (
     <div className="editor-container">
-      {/* Step Navigation */}
-      <StepWizard
-        currentStep={currentStep}
-        setCurrentStep={setCurrentStep}
-        completedSteps={completedSteps}
-      />
+      {/* App Header with Step Wizard */}
+      <div className="app-header">
+        <div className="header-content">
+          <div className="logo-section">
+            <div className="logo-icon">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                <rect x="4" y="4" width="24" height="24" rx="4" stroke="currentColor" strokeWidth="2" />
+                <path d="M10 16L14 20L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div className="logo-text">
+              <h1>Certifyly</h1>
+              <p>Certificate Generator</p>
+            </div>
+          </div>
+
+          <StepWizard
+            currentStep={currentStep}
+            setCurrentStep={setCurrentStep}
+            completedSteps={completedSteps}
+          />
+
+          <a className="header-link" href="/">
+            ← Back to Home
+          </a>
+        </div>
+      </div>
 
       <div className="editor-layout-stepped">
         {/* Left Sidebar - Step Content */}

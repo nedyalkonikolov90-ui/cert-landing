@@ -2277,6 +2277,9 @@ button:disabled {
 /* ============================================================================
    STEPPED EDITOR LAYOUT
    ============================================================================ */
+/* ============================================================================
+   STEPPED EDITOR LAYOUT - FULL WIDTH
+   ============================================================================ */
 
 .editor-container {
   min-height: 100vh;
@@ -2287,15 +2290,15 @@ button:disabled {
   display: grid;
   grid-template-columns: 600px 1fr;
   gap: 0;
-  max-width: var(--container-2xl);
-  margin: 0 auto;
+  width: 100%;
+  height: calc(100vh - 140px);
 }
 
 .step-sidebar {
   background: var(--bg-card);
   border-right: 1px solid var(--border);
   overflow-y: auto;
-  max-height: calc(100vh - 140px);
+  height: 100%;
 }
 
 .step-preview {
@@ -2304,18 +2307,275 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  height: 100%;
+  width: 100%;
 }
 
 @media (max-width: 1200px) {
   .editor-layout-stepped {
     grid-template-columns: 1fr;
+    height: auto;
   }
   
   .step-sidebar {
-    max-height: none;
+    height: auto;
   }
   
   .step-preview {
     min-height: 600px;
   }
+}
+
+/* ============================================================================
+   COMPACT STEP LAYOUTS
+   ============================================================================ */
+
+.step-panel-compact {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.step-header-compact {
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.step-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+}
+
+.step-title-compact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.step-icon-small {
+  font-size: 24px;
+}
+
+.step-main-title-compact {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.step-subtitle-compact {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.step-actions-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.status-ready-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-md);
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border-radius: var(--radius-md);
+}
+
+.step-body-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+.step-layout-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-lg);
+}
+
+.step-col-left,
+.step-col-right {
+  min-width: 0;
+}
+
+.control-section-compact {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+
+.section-title-compact {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-xs);
+}
+
+.section-desc-compact {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-lg);
+}
+
+.control-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.control-group-compact {
+  margin-bottom: 0;
+}
+
+.control-label-compact {
+  display: block;
+  margin-bottom: var(--space-xs);
+}
+
+.input-mode-tabs-compact {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.mode-tab-compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-family: inherit;
+}
+
+.mode-tab-compact:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-hover);
+}
+
+.mode-tab-compact.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+}
+
+.upload-area-compact {
+  margin-top: var(--space-md);
+}
+
+.upload-zone-compact {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-xl);
+  background: var(--bg-surface);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  width: 100%;
+}
+
+.upload-zone-compact:hover {
+  border-color: var(--primary);
+  background: rgba(67, 83, 255, 0.02);
+}
+
+.upload-text-compact {
+  text-align: center;
+}
+
+.upload-title-compact {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-xs);
+}
+
+.upload-subtitle-compact {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.file-uploaded-compact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: rgba(16, 185, 129, 0.05);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: var(--radius-md);
+}
+
+.file-icon-compact {
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+.file-details-compact {
+  flex: 1;
+}
+
+.file-name-compact {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.file-size-compact {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.btn-small {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--text-xs);
+}
+
+.error-box-compact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: rgba(239, 68, 68, 0.05);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--error);
+  margin-top: var(--space-md);
+}
+
+/* Update layout height */
+.editor-layout-stepped {
+  height: calc(100vh - 80px);
+}
+
+.header-content .step-wizard {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.header-content .step-wizard-inner {
+  max-width: 600px;
 }
