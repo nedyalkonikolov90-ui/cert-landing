@@ -28,11 +28,10 @@ export default function Step1Template({
       </div>
 
       <div className="step-body">
-        {/* Paper Size */}
         <div className="control-group">
           <label className="control-label">
             <span className="label-text">Paper Size</span>
-            <span className="label-hint">💡 Choose standard size or match your template</span>
+            <span className="label-hint">Choose standard size or match your template</span>
           </label>
           <select className="form-select" value={paper} onChange={(e) => setPaper(e.target.value)}>
             <option value="A4">A4 Landscape (842 × 595 px)</option>
@@ -40,37 +39,34 @@ export default function Step1Template({
             <option value="CUSTOM">Custom Size (matches your template)</option>
           </select>
           {paper === "CUSTOM" && (
-            <div className="hint-box">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M8 5v3M8 11h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              <span>The canvas will automatically resize to match your uploaded template's dimensions</span>
-            </div>
+            <p className="form-hint">
+              Canvas will automatically resize to match your uploaded template dimensions
+            </p>
           )}
         </div>
 
-        {/* Upload Button */}
         <div className="control-group">
+          <label className="control-label">
+            <span className="label-text">Select Template</span>
+            <span className="label-hint">
+              Click a template below or upload your own design (PNG, JPG, SVG)
+            </span>
+          </label>
+
           <button
             type="button"
-            className="btn-upload-large"
+            className="btn-upload-template"
             onClick={() => templateInputRef.current?.click()}
           >
-            <div className="upload-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M12 4v16M4 12h16"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>
-            <div className="upload-text">
-              <div className="upload-title">Upload Custom Template</div>
-              <div className="upload-subtitle">PNG, JPG, or SVG • Landscape recommended</div>
-            </div>
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path
+                d="M10 4v12M4 10h12"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+            Upload Custom Template
           </button>
 
           <input
@@ -83,6 +79,9 @@ export default function Step1Template({
               if (!file) return;
 
               try {
+                if (!onAddCustomTemplate) {
+                  throw new Error("Custom template upload is not enabled.");
+                }
                 const newTemplate = await onAddCustomTemplate(file);
                 if (newTemplate?.key) setTemplateKey(newTemplate.key);
               } catch (err) {
@@ -92,14 +91,6 @@ export default function Step1Template({
               }
             }}
           />
-        </div>
-
-        {/* Template Gallery */}
-        <div className="control-group">
-          <label className="control-label">
-            <span className="label-text">Or Choose from Gallery</span>
-            <span className="label-hint">Click to select a pre-designed template</span>
-          </label>
 
           <div className="template-grid-step1">
             {templates.length === 0 ? (
@@ -160,23 +151,13 @@ export default function Step1Template({
         </div>
       </div>
 
-      <div className="step-actions">
-        <button
-          className="btn-primary btn-large btn-next"
-          onClick={handleContinue}
-          disabled={!templateKey}
-        >
+      <div className="step-footer">
+        <button className="btn-primary btn-large" onClick={handleContinue} disabled={!templateKey}>
           {templateKey ? (
             <>
               Continue to Customize
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <path
-                  d="M7 4l6 6-6 6"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
+                <path d="M7 4l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </>
           ) : (
