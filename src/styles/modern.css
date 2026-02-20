@@ -140,9 +140,47 @@ body {
 }
 
 .header-content {
-  max-width: var(--container-2xl);
-  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: var(--space-md) var(--space-lg);
+  gap: var(--space-lg);
+}
+
+.logo-section {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-width: 200px;
+}
+
+.logo-icon svg {
+  color: var(--primary);
+}
+
+.logo-text h1 {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.logo-text p {
+  font-size: var(--text-xs);
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.header-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.header-link:hover {
+  color: var(--primary);
+}
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2278,7 +2316,7 @@ button:disabled {
    STEPPED EDITOR LAYOUT
    ============================================================================ */
 /* ============================================================================
-   STEPPED EDITOR LAYOUT - FULL WIDTH
+   STEPPED EDITOR LAYOUT - 3 COLUMN
    ============================================================================ */
 
 .editor-container {
@@ -2288,10 +2326,10 @@ button:disabled {
 
 .editor-layout-stepped {
   display: grid;
-  grid-template-columns: 600px 1fr;
+  grid-template-columns: 400px 1fr 400px;
   gap: 0;
   width: 100%;
-  height: calc(100vh - 140px);
+  height: calc(100vh - 80px);
 }
 
 .step-sidebar {
@@ -2311,18 +2349,38 @@ button:disabled {
   width: 100%;
 }
 
+.step-right-panel {
+  background: var(--bg-card);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  height: 100%;
+  padding: var(--space-lg);
+}
+
+@media (max-width: 1400px) {
+  .editor-layout-stepped {
+    grid-template-columns: 350px 1fr 350px;
+  }
+}
+
 @media (max-width: 1200px) {
   .editor-layout-stepped {
     grid-template-columns: 1fr;
     height: auto;
   }
   
-  .step-sidebar {
+  .step-sidebar,
+  .step-right-panel {
     height: auto;
   }
   
   .step-preview {
     min-height: 600px;
+  }
+  
+  .step-right-panel {
+    border-left: none;
+    border-top: 1px solid var(--border);
   }
 }
 
@@ -2578,4 +2636,21 @@ button:disabled {
 
 .header-content .step-wizard-inner {
   max-width: 600px;
+}
+
+/* ============================================================================
+   RIGHT PANEL STYLES
+   ============================================================================ */
+
+.panel-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-xs) 0;
+}
+
+.panel-subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  margin: 0 0 var(--space-lg) 0;
 }

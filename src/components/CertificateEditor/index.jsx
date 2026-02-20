@@ -508,12 +508,6 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
 
           {currentStep === 2 && (
             <Step2Customize
-              selectedField={selectedField}
-              updateField={updateField}
-              fontOptions={FONT_OPTIONS}
-              stageRef={stageRef}
-              ensureFontLoaded={ensureFontLoaded}
-              CW={CW}
               certTitle={certTitle}
               setCertTitle={setCertTitle}
               subtitle={subtitle}
@@ -539,16 +533,12 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
               handleFileUpload={handleFileUpload}
               error={error}
               recipients={recipients}
-              handleExportPdf={handleExportPdf}
-              handleExportZip={handleExportZip}
-              exportLoading={exportLoading}
-              progress={progress}
               onBack={handleStep3Back}
             />
           )}
         </div>
 
-        {/* Right Side - Live Preview (Always Visible) */}
+        {/* Center - Live Preview */}
         <div className="step-preview">
           <CanvasPreview
             cw={CW}
@@ -569,6 +559,38 @@ export default function CertificateEditor({ templates, onAddCustomTemplate }) {
             editorRect={editorRect}
             paper={paper}
           />
+        </div>
+
+        {/* Right Panel - Inspector or Export */}
+        <div className="step-right-panel">
+          {currentStep === 2 && (
+            <div>
+              <h3 className="panel-title">Style Inspector</h3>
+              <p className="panel-subtitle">Click text on preview to customize</p>
+              <Inspector
+                selectedField={selectedField}
+                updateField={updateField}
+                fontOptions={FONT_OPTIONS}
+                stageRef={stageRef}
+                ensureFontLoaded={ensureFontLoaded}
+                CW={CW}
+              />
+            </div>
+          )}
+
+          {currentStep === 3 && (
+            <div>
+              <h3 className="panel-title">Export</h3>
+              <p className="panel-subtitle">Download your certificates</p>
+              <ExportPanel
+                recipients={recipients}
+                onExportPdf={handleExportPdf}
+                onExportZip={handleExportZip}
+                exportLoading={exportLoading}
+                progress={progress}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
