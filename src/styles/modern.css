@@ -2251,6 +2251,57 @@ button:disabled {
   gap: var(--space-lg);
 }
 
+/* Step 1 layout tweaks: show more thumbnails above the fold */
+.step-panel-template .step-header {
+  padding: var(--space-xl) var(--space-lg) var(--space-md);
+}
+
+.step-panel-template .step-icon {
+  font-size: 36px;
+  margin-bottom: var(--space-sm);
+}
+
+.step-panel-template .step-subtitle {
+  margin-top: 0;
+}
+
+.step-panel-template .btn-upload-template {
+  margin-bottom: var(--space-md);
+}
+
+.step-panel-template .template-toolbar {
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.step-panel-template .template-grid-step1 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.step-panel-template .template-card-large {
+  padding: var(--space-sm);
+  gap: var(--space-sm);
+}
+
+.step-panel-template .template-preview {
+  aspect-ratio: 16 / 10;
+}
+
+@media (max-width: 640px) {
+  .step-panel-template .template-grid-step1 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.step-footer-right {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-lg) var(--space-lg);
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
 .template-card-large {
   background: var(--bg-card);
   border: 2px solid var(--border);

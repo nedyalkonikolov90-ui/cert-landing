@@ -71,7 +71,7 @@ export default function Step1Template({
     e.stopPropagation();
   };
   return (
-    <div className="step-panel">
+    <div className="step-panel step-panel-template">
       <div className="step-header">
         <div className="step-icon">🎨</div>
         <h2 className="step-main-title">Choose Your Template</h2>
@@ -230,7 +230,7 @@ export default function Step1Template({
         </div>
       </div>
 
-      <div className="step-footer">
+      <div className="step-footer step-footer-right">
         <button className="btn-primary btn-large" onClick={handleContinue} disabled={!templateKey}>
           {templateKey ? (
             <>
